@@ -146,10 +146,6 @@ with st.sidebar:
                         <code style="color: var(--text-color); font-family: 'Courier New', monospace; font-size: 13px; word-break: break-all; display: block;">{unique_url}</code>
                     </div>
                 """.strip(), unsafe_allow_html=True)
-                
-                if st.button("Upload Another Plate"):
-                    st.session_state.has_just_saved = False
-                    st.rerun()
 
 # --- MAIN INTERFACE (UNCHANGED) ---
 plate_col, info_col = st.columns([1.7, 1])
