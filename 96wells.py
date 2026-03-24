@@ -37,20 +37,24 @@ with st.sidebar:
     
     # Check for saved plates first
     saved_files = [f.replace(".csv", "") for f in os.listdir("saved_plates") if f.endswith(".csv")]
-    selected_saved = st.selectbox("📂 Load a Saved Plate", options=["-- New Upload --"] + saved_files)
-
+    selected_saved = st.selectbox("📂 Load a Saved Plate", options=["-- New Upload --"] + saved_files,
+    key="plate_selector"
+)
     df = pd.DataFrame()
     id_col, name_col, smiles_col = None, None, None
 
-    # LOGIC: Load from Save OR URL OR Upload
+    # Determine if we are in "Saved Mode" or "New Mode"
+    is_saved_plate = False
+
     if url_plate_id and url_plate_id in saved_files:
         st.success(f"Linked to Plate: {url_plate_id}")
         df = pd.read_csv(f"saved_plates/{url_plate_id}.csv")
-        # Automatically set columns if they exist in the saved file
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES' 
+        is_saved_plate = True
     elif selected_saved != "-- New Upload --":
         df = pd.read_csv(f"saved_plates/{selected_saved}.csv")
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES'
+        is_saved_plate = True
     else:
         uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
         if uploaded_file:
@@ -60,40 +64,53 @@ with st.sidebar:
             name_col = st.selectbox("Product Name Column", options=cols)
             smiles_col = st.selectbox("SMILES Column", options=cols)
 
-    # Clean and Standardize Data
+    # Clean and Standardize Data (Keeps your logic for all modes)
     if not df.empty and id_col and name_col and smiles_col:
         df[id_col] = df[id_col].astype(str).str.split('.').str[0].str.strip().str.upper().str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
         
-        # --- NEW: SAVE BUTTON ---
-        st.divider()
-        st.subheader("2. Permanent Storage")
-        save_id = st.text_input("Barcode / Plate ID", value=url_plate_id if url_plate_id else "PLATE_001")
-        
-        if st.button("💾 Save Plate to App"):
-            # 1. Standardize and Save the file
-            save_df = df[[id_col, name_col, smiles_col]].copy()
-            save_df.columns = ['Well', 'Product_Name', 'SMILES']
-            save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
-            
-            # 2. Generate the Unique URL
-            # This detects if you are running locally or on the web automatically
+        # --- CONDITIONAL UI: VIEWING SAVED vs NEW ---
+        if is_saved_plate:
+            # 1. Show only the Link and the Delete button for existing plates
+            st.divider()
             import urllib.parse
-            base_url = "96wells.streamlit.app" # Default for local
-            # If deployed, you can hardcode your streamlit.app URL here instead
+            current_id = selected_saved if selected_saved != "-- New Upload --" else url_plate_id
+            unique_url = f"96wells.streamlit.app/?plate={urllib.parse.quote(current_id)}"
             
-            unique_url = f"{base_url}/?plate={urllib.parse.quote(save_id)}"
-            
-            st.success(f"Saved as '{save_id}'!")
-            
-            # 3. Display the Link
             st.markdown(f"""
-                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; border-left: 5px solid #4A90E2;">
-                    <strong>Unique Plate URL:</strong><br>
-                    <code style="color: #e83e8c;">{unique_url}</code>
+                <div style="border: 1px solid var(--text-color); border-radius: 8px; padding: 12px; opacity: 0.8;">
+                    <p style="color: #4A90E2; font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0 0 5px 0;">🔗 Link to Plate</p>
+                    <code style="color: var(--text-color); font-family: 'Courier New', monospace; font-size: 13px; word-break: break-all; display: block;">{unique_url}</code>
                 </div>
-            """, unsafe_allow_html=True)
+            """.strip(), unsafe_allow_html=True)
             
-            st.info("Copy this URL to link your physical barcode to this digital plate.")
+            st.write("")
+            if st.button(f"🗑️ Delete {current_id}", type="secondary", use_container_width=True):
+                os.remove(f"saved_plates/{current_id}.csv")
+                st.rerun()
+                
+        else:
+            # 2. Show the "Permanent Storage" Save options ONLY for new uploads
+            st.divider()
+            st.subheader("2. Permanent Storage")
+            save_id = st.text_input("Barcode / Plate ID", value="PLATE_001")
+
+            if st.button("💾 Save Plate to App", use_container_width=True):
+                # 1. Standardize and Save
+                save_df = df[[id_col, name_col, smiles_col]].copy()
+                save_df.columns = ['Well', 'Product_Name', 'SMILES']
+                save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
+                
+                # 2. Visual Indication
+                st.success(f"✅ {save_id} registered successfully!")
+                
+                # 3. RESET THE DROPDOWN TO BASE STATE
+                if "plate_selector" in st.session_state:
+                    del st.session_state["plate_selector"]
+                
+                # 4. Brief pause and Refresh
+                import time
+                time.sleep(1) 
+                st.rerun()
 
 # --- MAIN INTERFACE (UNCHANGED) ---
 plate_col, info_col = st.columns([1.7, 1])
