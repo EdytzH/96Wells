@@ -70,12 +70,30 @@ with st.sidebar:
         save_id = st.text_input("Barcode / Plate ID", value=url_plate_id if url_plate_id else "PLATE_001")
         
         if st.button("💾 Save Plate to App"):
-            # We standardize the column names for the 'Save' file so they auto-load correctly next time
+            # 1. Standardize and Save the file
             save_df = df[[id_col, name_col, smiles_col]].copy()
             save_df.columns = ['Well', 'Product_Name', 'SMILES']
             save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
-            st.success(f"Saved! You can now access this as '{save_id}'")
-            st.rerun()
+            
+            # 2. Generate the Unique URL
+            # This detects if you are running locally or on the web automatically
+            import urllib.parse
+            base_url = "96wells.streamlit.app" # Default for local
+            # If deployed, you can hardcode your streamlit.app URL here instead
+            
+            unique_url = f"{base_url}/?plate={urllib.parse.quote(save_id)}"
+            
+            st.success(f"Saved as '{save_id}'!")
+            
+            # 3. Display the Link
+            st.markdown(f"""
+                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; border-left: 5px solid #4A90E2;">
+                    <strong>Unique Plate URL:</strong><br>
+                    <code style="color: #e83e8c;">{unique_url}</code>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            st.info("Copy this URL to link your physical barcode to this digital plate.")
 
 # --- MAIN INTERFACE (UNCHANGED) ---
 plate_col, info_col = st.columns([1.7, 1])
