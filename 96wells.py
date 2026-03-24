@@ -98,23 +98,58 @@ with st.sidebar:
                 st.error("Please add `openpyxl` to requirements.txt")
                 st.stop()
 
-    # 3. GLOBAL CLEANING & SAVING
+# 3. GLOBAL CLEANING & SAVING
     if not df.empty and id_col and name_col and smiles_col:
+        # Standardize data format (A01 -> A1)
         df[id_col] = df[id_col].astype(str).str.split('.').str[0].str.strip().str.upper().str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
         
         if not is_viewing_saved:
             st.divider()
-            save_id = st.text_input("Barcode / Plate ID", value="PLATE_001")
-            if st.button("💾 Save Plate to App", use_container_width=True):
-                save_df = df[[id_col, name_col, smiles_col]].copy()
-                save_df.columns = ['Well', 'Product_Name', 'SMILES']
-                save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
+            
+            # Initialize toggle
+            if "has_just_saved" not in st.session_state:
+                st.session_state.has_just_saved = False
+
+            # --- PRE-SAVE VIEW ---
+            if not st.session_state.has_just_saved:
+                save_id = st.text_input("Barcode / Plate ID", value="PLATE_001")
                 
-                # Set the 'just saved' state so the link appears after rerun
-                st.session_state.just_saved_id = save_id
-                st.session_state.up_ver += 1 # Wipes the uploader
+                # CHECK IF FILE EXISTS
+                file_path = f"saved_plates/{save_id}.csv"
+                name_exists = os.path.exists(file_path)
+
+                if name_exists:
+                    st.error(f"⚠️ '{save_id}' already exists. Please choose a different name.")
                 
-                st.rerun()
+                # Disable button if name exists or input is empty
+                save_disabled = name_exists or not save_id.strip()
+                
+                if st.button("💾 Save Plate to App", use_container_width=True, disabled=save_disabled):
+                    save_df = df[[id_col, name_col, smiles_col]].copy()
+                    save_df.columns = ['Well', 'Product_Name', 'SMILES']
+                    save_df.to_csv(file_path, index=False)
+                    
+                    # Store ID and flip toggle (No Rerun)
+                    st.session_state.last_saved_id = save_id
+                    st.session_state.has_just_saved = True
+                    st.success(f"✅ {save_id} Saved!")
+
+            # --- POST-SAVE VIEW (The Link) ---
+            if st.session_state.has_just_saved:
+                import urllib.parse
+                sid = st.session_state.last_saved_id
+                unique_url = f"96wells.streamlit.app/?plate={urllib.parse.quote(sid)}"
+                
+                st.markdown(f"""
+                    <div style="border: 1px solid var(--text-color); border-radius: 8px; padding: 12px; margin-top: 10px; opacity: 0.8;">
+                        <p style="color: #4A90E2; font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0 0 5px 0;">🔗 Link to Plate</p>
+                        <code style="color: var(--text-color); font-family: 'Courier New', monospace; font-size: 13px; word-break: break-all; display: block;">{unique_url}</code>
+                    </div>
+                """.strip(), unsafe_allow_html=True)
+                
+                if st.button("Upload Another Plate"):
+                    st.session_state.has_just_saved = False
+                    st.rerun()
 
 # --- MAIN INTERFACE (UNCHANGED) ---
 plate_col, info_col = st.columns([1.7, 1])
