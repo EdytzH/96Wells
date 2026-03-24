@@ -35,81 +35,85 @@ st.markdown("""
 with st.sidebar:
     st.header("1. Data Setup")
     
-    # Check for saved plates first
+    # 1. Load existing plates
     saved_files = [f.replace(".csv", "") for f in os.listdir("saved_plates") if f.endswith(".csv")]
-    selected_saved = st.selectbox("📂 Load a Saved Plate", options=["-- New Upload --"] + saved_files,
-    key="plate_selector"
-)
+    
+    # Dropdown - if we just saved, we'll force this to the new plate
+    default_index = 0
+    if "just_saved_id" in st.session_state and st.session_state.just_saved_id in saved_files:
+        default_index = saved_files.index(st.session_state.just_saved_id) + 1
+        # Clear the 'just saved' state so it doesn't stay locked forever
+        del st.session_state.just_saved_id
+
+    selected_saved = st.selectbox(
+        "📂 Load a Saved Plate", 
+        options=["-- New Upload --"] + saved_files,
+        index=default_index,
+        key="plate_selector"
+    )
+
     df = pd.DataFrame()
     id_col, name_col, smiles_col = None, None, None
+    is_viewing_saved = False
 
-    # Determine if we are in "Saved Mode" or "New Mode"
-    is_saved_plate = False
+    # 2. SOURCE LOGIC
+    # If URL exists OR Dropdown is selected, show the saved view
+    active_id = url_plate_id if (url_plate_id and url_plate_id in saved_files and selected_saved == "-- New Upload --") else (selected_saved if selected_saved != "-- New Upload --" else None)
 
-    if url_plate_id and url_plate_id in saved_files:
-        st.success(f"Linked to Plate: {url_plate_id}")
-        df = pd.read_csv(f"saved_plates/{url_plate_id}.csv")
-        id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES' 
-        is_saved_plate = True
-    elif selected_saved != "-- New Upload --":
-        df = pd.read_csv(f"saved_plates/{selected_saved}.csv")
+    if active_id:
+        df = pd.read_csv(f"saved_plates/{active_id}.csv")
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES'
-        is_saved_plate = True
-    else:
-        uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
-        if uploaded_file:
-            df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('xlsx') else pd.read_csv(uploaded_file)
-            cols = df.columns.tolist()
-            id_col = st.selectbox("Well ID Column", options=cols)
-            name_col = st.selectbox("Product Name Column", options=cols)
-            smiles_col = st.selectbox("SMILES Column", options=cols)
+        is_viewing_saved = True
+        
+        # --- VIEW MODE UI ---
+        st.success(f"Viewing: {active_id}")
+        
+        import urllib.parse
+        unique_url = f"96wells.streamlit.app/?plate={urllib.parse.quote(active_id)}"
+        st.markdown(f"""
+            <div style="border: 1px solid var(--text-color); border-radius: 8px; padding: 12px; margin-top: 10px; opacity: 0.8;">
+                <p style="color: #4A90E2; font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0 0 5px 0;">🔗 Link to Plate</p>
+                <code style="color: var(--text-color); font-family: 'Courier New', monospace; font-size: 13px; word-break: break-all; display: block;">{unique_url}</code>
+            </div>
+        """.strip(), unsafe_allow_html=True)
 
-    # Clean and Standardize Data (Keeps your logic for all modes)
+        st.write("")
+        if st.button(f"🗑️ Delete Plate", type="secondary", use_container_width=True):
+            os.remove(f"saved_plates/{active_id}.csv")
+            st.rerun()
+
+    else:
+        # --- NEW UPLOAD MODE ---
+        if "up_ver" not in st.session_state: st.session_state.up_ver = 0
+        uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"uploader_{st.session_state.up_ver}")
+        
+        if uploaded_file:
+            try:
+                df = pd.read_excel(uploaded_file, engine='openpyxl') if uploaded_file.name.endswith('xlsx') else pd.read_csv(uploaded_file)
+                cols = df.columns.tolist()
+                id_col = st.selectbox("Well ID Column", options=cols)
+                name_col = st.selectbox("Product Name Column", options=cols)
+                smiles_col = st.selectbox("SMILES Column", options=cols)
+            except ImportError:
+                st.error("Please add `openpyxl` to requirements.txt")
+                st.stop()
+
+    # 3. GLOBAL CLEANING & SAVING
     if not df.empty and id_col and name_col and smiles_col:
         df[id_col] = df[id_col].astype(str).str.split('.').str[0].str.strip().str.upper().str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
         
-        # --- CONDITIONAL UI: VIEWING SAVED vs NEW ---
-        if is_saved_plate:
-            # 1. Show only the Link and the Delete button for existing plates
+        if not is_viewing_saved:
             st.divider()
-            import urllib.parse
-            current_id = selected_saved if selected_saved != "-- New Upload --" else url_plate_id
-            unique_url = f"96wells.streamlit.app/?plate={urllib.parse.quote(current_id)}"
-            
-            st.markdown(f"""
-                <div style="border: 1px solid var(--text-color); border-radius: 8px; padding: 12px; opacity: 0.8;">
-                    <p style="color: #4A90E2; font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0 0 5px 0;">🔗 Link to Plate</p>
-                    <code style="color: var(--text-color); font-family: 'Courier New', monospace; font-size: 13px; word-break: break-all; display: block;">{unique_url}</code>
-                </div>
-            """.strip(), unsafe_allow_html=True)
-            
-            st.write("")
-            if st.button(f"🗑️ Delete {current_id}", type="secondary", use_container_width=True):
-                os.remove(f"saved_plates/{current_id}.csv")
-                st.rerun()
-                
-        else:
-            # 2. Show the "Permanent Storage" Save options ONLY for new uploads
-            st.divider()
-            st.subheader("2. Permanent Storage")
             save_id = st.text_input("Barcode / Plate ID", value="PLATE_001")
-
             if st.button("💾 Save Plate to App", use_container_width=True):
-                # 1. Standardize and Save
                 save_df = df[[id_col, name_col, smiles_col]].copy()
                 save_df.columns = ['Well', 'Product_Name', 'SMILES']
                 save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
                 
-                # 2. Visual Indication
-                st.success(f"✅ {save_id} registered successfully!")
+                # Set the 'just saved' state so the link appears after rerun
+                st.session_state.just_saved_id = save_id
+                st.session_state.up_ver += 1 # Wipes the uploader
                 
-                # 3. RESET THE DROPDOWN TO BASE STATE
-                if "plate_selector" in st.session_state:
-                    del st.session_state["plate_selector"]
-                
-                # 4. Brief pause and Refresh
-                import time
-                time.sleep(1) 
                 st.rerun()
 
 # --- MAIN INTERFACE (UNCHANGED) ---
