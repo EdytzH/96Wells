@@ -102,10 +102,41 @@ with st.sidebar:
                 st.error("Please add `openpyxl` to requirements.txt")
                 st.stop()
 
-    # --- 3. STORAGE LOGIC (Only for New Uploads) ---
+   # --- 3. STORAGE LOGIC (Inside Sidebar) ---
     if not df.empty and id_col and name_col and smiles_col:
-        # Standardize Wells
-        df[id_col] = df[id_col].astype(str).str.split('.').str[0].str.strip().str.upper().str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
+        
+        def convert_10x10_to_96(well_id):
+            import re
+            # 1. Clean the input (e.g., " J 09 " -> "J9")
+            match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
+            if not match: return well_id
+            
+            row_let, col_num = match.groups()
+            r_idx = ord(row_let) - ord('A') # A=0, B=1 ... J=9
+            c_idx = int(col_num)           # 1-10
+            
+            # 2. Calculate the 'Absolute Position' in the 10x10 sequence (1 to 100)
+            # Formula: (Row Index * 10 columns) + Current Column
+            abs_pos = (r_idx * 10) + c_idx 
+            
+            # 3. Translate that Position into 96-well Coordinates (8 rows x 12 columns)
+            if abs_pos <= 96:
+                # New Row: A-H (Divide by 12)
+                new_row_idx = (abs_pos - 1) // 12
+                new_row_let = chr(ord('A') + new_row_idx)
+                
+                # New Column: 1-12 (Remainder of 12)
+                new_col_num = ((abs_pos - 1) % 12) + 1
+                
+                return f"{new_row_let}{new_col_num}"
+            
+            return "EMPTY" # J7, J8, J9, J10 (Positions 97-100)
+
+        # Apply the conversion
+        df[id_col] = df[id_col].apply(convert_10x10_to_96)
+        
+        # Remove the 'Empty' slots so they don't show up on the grid
+        df = df[df[id_col] != "EMPTY"]
         
         # We only show the Save UI if we are NOT currently viewing a saved plate
         if not is_viewing_saved:
