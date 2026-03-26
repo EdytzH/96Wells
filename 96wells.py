@@ -19,23 +19,37 @@ if url_barcode and os.path.exists(registry_path):
     if not match.empty:
         url_plate_id = match['plate_name'].values[0]
 
-# --- CSS (UNCHANGED) ---
+# --- CSS (REVERTED TO STABLE VERSION) ---
 st.markdown("""
     <style>
     [data-testid="stMain"] button[kind="primary"], 
     [data-testid="stMain"] button[kind="secondary"] {
-        display: flex !important; align-items: center !important; justify-content: center !important;
-        border-radius: 50% !important; width: 40px !important; height: 40px !important;
-        padding: 0px !important; margin: auto !important; line-height: 40px !important;
+        display: flex !important; 
+        align-items: center !important; 
+        justify-content: center !important;
+        border-radius: 50% !important; 
+        width: 40px !important; 
+        height: 40px !important;
+        padding: 0px !important; 
+        margin: auto !important; 
+        line-height: 40px !important;
     }
-    [data-testid="stSidebar"] button { border-radius: 4px !important; width: auto !important; height: auto !important; padding: 8px 16px !important; }
-    button[kind="primary"] { background-color: #C1E1C1 !important; color: #2E7D32 !important; border: 1px solid #A5D6A7 !important; }
+    [data-testid="stSidebar"] button { 
+        border-radius: 4px !important; 
+        width: auto !important; 
+        height: auto !important; 
+        padding: 8px 16px !important; 
+    }
+    button[kind="primary"] { 
+        background-color: #C1E1C1 !important; 
+        color: #2E7D32 !important; 
+        border: 1px solid #A5D6A7 !important; 
+    }
     .well-id-header { font-size: 26px; font-weight: 800; color: #4A90E2; margin-bottom: 5px; }
     .label-text { font-weight: bold; text-align: center; color: #bbb; margin: 0; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR SETUP ---
 # --- SIDEBAR SETUP ---
 with st.sidebar:
     st.header("1. Data Setup")
