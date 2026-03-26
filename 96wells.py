@@ -102,57 +102,51 @@ with st.sidebar:
                 st.error("Please add `openpyxl` to requirements.txt")
                 st.stop()
 
-   # --- 3. STORAGE LOGIC (Inside Sidebar) ---
+  # --- 3. STORAGE LOGIC (Inside Sidebar) ---
     if not df.empty and id_col and name_col and smiles_col:
         
-        def convert_10x10_to_96(well_id):
-            import re
-            # 1. Clean the input (e.g., " J 09 " -> "J9")
-            match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
-            if not match: return well_id
-            
-            row_let, col_num = match.groups()
-            r_idx = ord(row_let) - ord('A') # A=0, B=1 ... J=9
-            c_idx = int(col_num)           # 1-10
-            
-            # 2. Calculate the 'Absolute Position' in the 10x10 sequence (1 to 100)
-            # Formula: (Row Index * 10 columns) + Current Column
-            abs_pos = (r_idx * 10) + c_idx 
-            
-            # 3. Translate that Position into 96-well Coordinates (8 rows x 12 columns)
-            if abs_pos <= 96:
-                # New Row: A-H (Divide by 12)
-                new_row_idx = (abs_pos - 1) // 12
-                new_row_let = chr(ord('A') + new_row_idx)
+        # --- CRITICAL FIX: Only run the 10x10 conversion for NEW uploads ---
+        if not is_viewing_saved:
+            def convert_10x10_to_96(well_id):
+                import re
+                # Clean input
+                match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
+                if not match: return well_id
                 
-                # New Column: 1-12 (Remainder of 12)
-                new_col_num = ((abs_pos - 1) % 12) + 1
+                row_let, col_num = match.groups()
+                r_idx = ord(row_let) - ord('A') 
+                c_idx = int(col_num)           
                 
-                return f"{new_row_let}{new_col_num}"
-            
-            return "EMPTY" # J7, J8, J9, J10 (Positions 97-100)
+                # Absolute position in 10x10 grid (1 to 100)
+                abs_pos = (r_idx * 10) + c_idx 
+                
+                if abs_pos <= 96:
+                    new_row_idx = (abs_pos - 1) // 12
+                    new_row_let = chr(ord('A') + new_row_idx)
+                    new_col_num = ((abs_pos - 1) % 12) + 1
+                    return f"{new_row_let}{new_col_num}"
+                return "EMPTY"
 
-        # Apply the conversion
-        df[id_col] = df[id_col].apply(convert_10x10_to_96)
+            # Apply conversion
+            df[id_col] = df[id_col].apply(convert_10x10_to_96)
+            # Remove J7-J10
+            df = df[df[id_col] != "EMPTY"]
         
-        # Remove the 'Empty' slots so they don't show up on the grid
-        df = df[df[id_col] != "EMPTY"]
+        # This part runs for BOTH new and saved (standardizes A01 -> A1)
+        df[id_col] = df[id_col].astype(str).str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
         
-        # We only show the Save UI if we are NOT currently viewing a saved plate
+        # --- SAVE UI (Only shows if it's a new upload) ---
         if not is_viewing_saved:
             st.divider()
             
-            # Sub-toggle: Have we clicked save in THIS session?
             if not st.session_state.get("has_just_saved", False):
                 st.subheader("2. Permanent Storage")
                 save_id = st.text_input("Barcode / Plate ID", value="PLATE_001", key="save_id_input")
                 
-                # Check for Duplicates
                 file_exists = os.path.exists(f"saved_plates/{save_id}.csv")
                 if file_exists:
                     st.error(f"⚠️ '{save_id}' already exists. Choose a new name.")
                 
-                # THE SAVE BUTTON (One and only)
                 if st.button("💾 Save Plate to App", key="save_btn", use_container_width=True, disabled=file_exists):
                     save_df = df[[id_col, name_col, smiles_col]].copy()
                     save_df.columns = ['Well', 'Product_Name', 'SMILES']
@@ -162,7 +156,7 @@ with st.sidebar:
                     st.session_state.last_saved_id = save_id
                     st.rerun()
             else:
-                # SUCCESS VIEW (Replaces the Save Button after click)
+                # SUCCESS VIEW
                 import urllib.parse
                 sid = st.session_state.last_saved_id
                 unique_url = f"96wells.streamlit.app/?plate={urllib.parse.quote(sid)}"
