@@ -9,13 +9,12 @@ if not os.path.exists("saved_plates"):
 # --- 1. HANDLE BARCODE/URL LINKING ---
 query_params = st.query_params
 url_barcode = query_params.get("barcode")
-url_plate_id = query_params.get("plate")  # Keep original support too
+url_plate_id = query_params.get("plate") 
 
-# Lookup Barcode in Registry
+# Registry lookup for Barcodes
 registry_path = "saved_plates/barcode_registry.csv"
 if url_barcode and os.path.exists(registry_path):
     reg_df = pd.read_csv(registry_path)
-    # Match barcode to find the custom plate name
     match = reg_df[reg_df['barcode'].astype(str) == str(url_barcode)]
     if not match.empty:
         url_plate_id = match['plate_name'].values[0]
@@ -107,89 +106,71 @@ with st.sidebar:
                 st.error("Please add `openpyxl` to requirements.txt")
                 st.stop()
 
-  # --- 3. STORAGE LOGIC (Inside Sidebar) ---
+ # --- 3. STORAGE LOGIC ---
     if not df.empty and id_col and name_col and smiles_col:
         
+        # 10x10 to 8x12 Remapping (Only for new uploads)
         if not is_viewing_saved:
             def convert_10x10_to_96(well_id):
                 import re
                 match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
                 if not match: return well_id
-                row_let, col_num = match.groups()
-                r_idx = ord(row_let) - ord('A') 
-                c_idx = int(col_num)           
+                r_idx, c_idx = ord(match.group(1)) - ord('A'), int(match.group(2))
                 abs_pos = (r_idx * 10) + c_idx 
                 if abs_pos <= 96:
-                    new_row_idx = (abs_pos - 1) // 12
-                    new_row_let = chr(ord('A') + new_row_idx)
-                    new_col_num = ((abs_pos - 1) % 12) + 1
-                    return f"{new_row_let}{new_col_num}"
+                    return f"{chr(ord('A') + (abs_pos - 1) // 12)}{(abs_pos - 1) % 12 + 1}"
                 return "EMPTY"
-
             df[id_col] = df[id_col].apply(convert_10x10_to_96)
             df = df[df[id_col] != "EMPTY"]
         
         df[id_col] = df[id_col].astype(str).str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
-        
+
+        # --- SAVE UI ---
         if not is_viewing_saved:
             st.divider()
-            
             if not st.session_state.get("has_just_saved", False):
                 st.subheader("2. Permanent Storage")
                 
-                # TWO INPUTS: Barcode (for the link) and Name (for the file)
+                # Inputs
                 barcode = st.text_input("Physical Barcode (8 Digits)", max_chars=8, key="bc_input")
                 plate_name = st.text_input("Custom Plate Name", value="PLATE_001", key="save_name_input")
                 
-                # VALIDATION
+                # Validations
                 is_valid_bc = len(barcode) == 8 and barcode.isdigit()
                 name_exists = os.path.exists(f"saved_plates/{plate_name}.csv")
-                
-                # Check if Barcode is already in registry
                 bc_exists = False
                 if os.path.exists(registry_path):
                     reg_df = pd.read_csv(registry_path)
                     bc_exists = str(barcode) in reg_df['barcode'].astype(str).values
 
                 if barcode and not is_valid_bc: st.warning("⚠️ Barcode must be 8 digits.")
-                if bc_exists: st.error("⚠️ Barcode already assigned to another plate.")
+                if bc_exists: st.error("⚠️ Barcode already assigned.")
                 if name_exists: st.error("⚠️ Plate Name already exists.")
-                
+
                 save_disabled = not is_valid_bc or bc_exists or name_exists or not plate_name.strip()
-                
+
                 if st.button("💾 Save & Link Barcode", key="save_btn", use_container_width=True, disabled=save_disabled):
-                    # 1. Save Plate CSV
+                    # Save Data CSV
                     save_df = df[[id_col, name_col, smiles_col]].copy()
                     save_df.columns = ['Well', 'Product_Name', 'SMILES']
                     save_df.to_csv(f"saved_plates/{plate_name}.csv", index=False)
                     
-                    # 2. Update Registry
-                    new_entry = pd.DataFrame([[barcode, plate_name]], columns=['barcode', 'plate_name'])
-                    if os.path.exists(registry_path):
-                        new_entry.to_csv(registry_path, mode='a', header=False, index=False)
-                    else:
-                        new_entry.to_csv(registry_path, index=False)
+                    # Update Registry
+                    new_row = pd.DataFrame([[barcode, plate_name]], columns=['barcode', 'plate_name'])
+                    new_row.to_csv(registry_path, mode='a', header=not os.path.exists(registry_path), index=False)
                     
                     st.session_state.has_just_saved = True
                     st.session_state.last_saved_bc = barcode
                     st.session_state.last_saved_name = plate_name
                     st.rerun()
             else:
-                # SUCCESS VIEW - Uses the Barcode in the URL
+                # SUCCESS VIEW
                 import urllib.parse
                 s_bc = st.session_state.last_saved_bc
-                s_name = st.session_state.last_saved_name
                 unique_url = f"96wells.streamlit.app/?barcode={urllib.parse.quote(str(s_bc))}"
-                
-                st.success(f"✅ {s_name} Linked to {s_bc}!")
-                st.markdown(f"""
-                    <div style="border: 1px solid var(--text-color); border-radius: 8px; padding: 12px; margin-top: 10px; opacity: 0.8;">
-                        <p style="color: #4A90E2; font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0 0 5px 0;">🔗 Barcode Link</p>
-                        <code style="color: var(--text-color); font-size: 13px; word-break: break-all;">{unique_url}</code>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button("Start Next Upload", key="reset_after_save", use_container_width=True):
+                st.success(f"✅ {st.session_state.last_saved_name} Linked!")
+                st.info(f"Link: {unique_url}")
+                if st.button("Start Next Upload", key="reset_after_save"):
                     st.session_state.has_just_saved = False
                     st.session_state.up_ver += 1
                     st.rerun()
