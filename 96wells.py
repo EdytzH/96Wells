@@ -244,8 +244,14 @@ with st.sidebar:
     scan_val = st.text_input("Click & Scan Barcode", key="barcode_scanner_input")
     
     if scan_val:
-        # Just update the URL and rerun; the "Top of Script Logic" will handle the rest
+        # 1. Update the URL
         st.query_params["barcode"] = scan_val
+        
+        # 2. FORCE the dropdown to reset its memory so it picks up the new scan
+        if "sb_ver" in st.session_state:
+            st.session_state.sb_ver += 1
+            
+        # 3. Clear the text input so it's ready for the next scan
         st.rerun()
     st.divider()
 
