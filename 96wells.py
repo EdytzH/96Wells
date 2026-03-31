@@ -60,6 +60,9 @@ st.markdown("""
 # --- SIDEBAR SETUP ---
 with st.sidebar:
     st.header("1. Data Setup")
+
+    if "sb_ver" not in st.session_state:
+        st.session_state.sb_ver = 0
     
    # 1. Fetch saved plates
     # We use a list comprehension to get all CSVs EXCEPT the barcode_registry
@@ -71,23 +74,26 @@ with st.sidebar:
     # Filter: Keep everything EXCEPT the registry
     saved_files = [f.replace(".csv", "") for f in all_csvs if f != "barcode_registry.csv"]
 
+
     start_index = 0
     
+    # ADDED: If we are in "upload" mode, force index 0
+    if st.session_state.get("view_mode") == "upload":
+        start_index = 0
     # Priority 1: Was a barcode just scanned?
-    if st.session_state.scanned_plate in saved_files:
+    elif st.session_state.scanned_plate in saved_files:
         start_index = saved_files.index(st.session_state.scanned_plate) + 1
-        # Clear it so it doesn't stay stuck on this plate forever
         st.session_state.scanned_plate = None 
-        
     # Priority 2: Is there a plate ID in the URL?
-    elif url_plate_id and url_plate_id in saved_files and st.session_state.get("view_mode") != "upload":
+    elif url_plate_id and url_plate_id in saved_files:
         start_index = saved_files.index(url_plate_id) + 1
 
     selected_saved = st.selectbox(
         "📂 Load a Saved Plate", 
         options=["-- New Upload --"] + saved_files,
         index=start_index,
-        key="sidebar_selector"
+        # This key changes when you click 'Upload New', forcing a reset
+        key=f"sidebar_selector_{st.session_state.sb_ver}" 
     )
 
     df = pd.DataFrame()
@@ -123,15 +129,9 @@ with st.sidebar:
             st.rerun()
             
         if st.button("➕ Upload New Plate", key="new_up_btn", use_container_width=True):
-            # 1. Clear the URL parameters
             st.query_params.clear()
-            
-            # 2. Reset the view mode in session state
-            st.session_state.view_mode = "upload"
-            
-            # 3. DO NOT manually set st.session_state.sidebar_selector here.
-            # Instead, just rerun. Because the URL is clear and view_mode is "upload",
-            # the app will naturally default to "-- New Upload --" on the next run.
+            # Bumping this number destroys the old dropdown and creates a fresh one at index 0
+            st.session_state.sb_ver += 1 
             st.rerun()
 
     # --- MODE B: NEW UPLOAD ---
