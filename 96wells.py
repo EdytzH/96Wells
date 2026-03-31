@@ -112,42 +112,75 @@ with st.sidebar:
         
         st.write("")
         if st.button("🗑️ Delete Plate", key="del_btn", type="secondary", use_container_width=True):
-            # 1. Delete the actual data file
-            file_path = f"saved_plates/{selected_saved}.csv"
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            # 1. Define paths
+            file_to_delete = f"saved_plates/{selected_saved}.csv"
             
-            # 2. Delete the barcode link from the registry
+            # 2. Delete the actual Plate CSV
+            if os.path.exists(file_to_delete):
+                os.remove(file_to_delete)
+            
+            # 3. Scrub the Barcode Registry
             if os.path.exists(registry_path):
                 reg_df = pd.read_csv(registry_path)
-                # Keep everything EXCEPT the plate we are deleting
-                new_reg_df = reg_df[reg_df['plate_name'] != selected_saved]
+                
+                # Use a very strict filter to remove the plate
+                # We strip spaces just in case 'PLATE_001 ' was saved instead of 'PLATE_001'
+                reg_df['plate_name'] = reg_df['plate_name'].astype(str).str.strip()
+                target_name = str(selected_saved).strip()
+                
+                # Keep only rows that DO NOT match the deleted plate
+                new_reg_df = reg_df[reg_df['plate_name'] != target_name]
+                
+                # Save the cleaned registry back to disk
                 new_reg_df.to_csv(registry_path, index=False)
             
-            # 3. Clean up and refresh
+            # 4. Clear the UI and the URL
             st.query_params.clear()
+            # Bump the sidebar version to force the dropdown to reset to "-- New Upload --"
+            if "sb_ver" in st.session_state:
+                st.session_state.sb_ver += 1
+            
             st.rerun()
             
         if st.button("➕ Upload New Plate", key="new_up_btn", use_container_width=True):
             st.query_params.clear()
-            # Bumping this number destroys the old dropdown and creates a fresh one at index 0
-            st.session_state.sb_ver += 1 
+            
+            # --- ADD THIS LINE TO HIDE THE OLD SUCCESS BUBBLES ---
+            st.session_state.has_just_saved = False
+            
+            # Bumping the version resets the dropdown memory
+            if "sb_ver" in st.session_state:
+                st.session_state.sb_ver += 1
+            
             st.rerun()
 
-    # --- MODE B: NEW UPLOAD ---
+# --- MODE B: NEW UPLOAD ---
     else:
         if "up_ver" not in st.session_state: st.session_state.up_ver = 0
+        
         uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"file_uploader_{st.session_state.up_ver}")
         
         if uploaded_file:
+            # --- NEW: RESET STATE IF A NEW FILE IS DETECTED ---
+            # If the filename is different from the last one we processed, clear the "Success" view
+            if st.session_state.get("last_uploaded_name") != uploaded_file.name:
+                st.session_state.has_just_saved = False
+                st.session_state.selected_well = None
+                st.session_state.last_uploaded_name = uploaded_file.name
+                # Note: We don't st.rerun here to avoid upload loops
+
             try:
+                # Load the data
                 df = pd.read_excel(uploaded_file, engine='openpyxl') if uploaded_file.name.endswith('xlsx') else pd.read_csv(uploaded_file)
                 cols = df.columns.tolist()
+                
+                # Column Selectors
                 id_col = st.selectbox("Well ID Column", options=cols, key="id_sel")
                 name_col = st.selectbox("Product Name Column", options=cols, key="name_sel")
                 smiles_col = st.selectbox("SMILES Column", options=cols, key="smiles_sel")
-            except ImportError:
-                st.error("Please add `openpyxl` to requirements.txt")
+                
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
                 st.stop()
 
   # --- 3. STORAGE LOGIC (Inside Sidebar) ---
@@ -242,22 +275,35 @@ with st.sidebar:
 
     st.subheader("🔍 Scan Plate")
     
-    # We wrap this in a form so it resets the input box automatically after you hit Enter
     with st.form("barcode_form", clear_on_submit=True):
         scan_val = st.text_input("Click & Scan Barcode")
         submitted = st.form_submit_button("Submit Scan", use_container_width=True)
         
         if submitted and scan_val:
-            # 1. Update the URL so the app knows which plate to load
-            st.query_params["barcode"] = scan_val
+            # 1. Check if registry exists and barcode is inside
+            found = False
+            if os.path.exists(registry_path):
+                reg_df = pd.read_csv(registry_path)
+                if str(scan_val) in reg_df['barcode'].astype(str).values:
+                    found = True
             
-            # 2. Reset the sidebar dropdown's memory
-            if "sb_ver" in st.session_state:
-                st.session_state.sb_ver += 1
-            
-            # 3. Rerun once to apply the changes
-            st.rerun()
-    st.divider()
+            if found:
+                # SUCCESS: Update URL and reset dropdown
+                st.query_params["barcode"] = scan_val
+                if "sb_ver" in st.session_state:
+                    st.session_state.sb_ver += 1
+                st.session_state.scan_error = None # Clear any old errors
+                st.rerun()
+            else:
+                # FAILURE: Set error message
+                st.session_state.scan_error = f"❌ Barcode '{scan_val}' not found in registry."
+                st.rerun()
+
+    # Display the error message if it exists
+    if st.session_state.get("scan_error"):
+        st.error(st.session_state.scan_error)
+        # Optional: Clear the error after it's shown once
+        st.session_state.scan_error = None
 
 
 
