@@ -241,18 +241,22 @@ with st.sidebar:
                     st.rerun()
 
     st.subheader("🔍 Scan Plate")
-    scan_val = st.text_input("Click & Scan Barcode", key="barcode_scanner_input")
     
-    if scan_val:
-        # 1. Update the URL
-        st.query_params["barcode"] = scan_val
+    # We wrap this in a form so it resets the input box automatically after you hit Enter
+    with st.form("barcode_form", clear_on_submit=True):
+        scan_val = st.text_input("Click & Scan Barcode")
+        submitted = st.form_submit_button("Submit Scan", use_container_width=True)
         
-        # 2. FORCE the dropdown to reset its memory so it picks up the new scan
-        if "sb_ver" in st.session_state:
-            st.session_state.sb_ver += 1
+        if submitted and scan_val:
+            # 1. Update the URL so the app knows which plate to load
+            st.query_params["barcode"] = scan_val
             
-        # 3. Clear the text input so it's ready for the next scan
-        st.rerun()
+            # 2. Reset the sidebar dropdown's memory
+            if "sb_ver" in st.session_state:
+                st.session_state.sb_ver += 1
+            
+            # 3. Rerun once to apply the changes
+            st.rerun()
     st.divider()
 
 
