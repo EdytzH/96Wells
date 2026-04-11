@@ -8,7 +8,7 @@ import json
 # --- 1. INITIALIZATION & CONNECTION ---
 st.set_page_config(layout="wide", page_title="96-Well Lab Plate")
 
-# Use the bridge URL you generated
+# Bridge URL for Apps Script
 BRIDGE_URL = "https://script.google.com/macros/s/AKfycbwEW5AT5W8t2Pqmrae5NkzLEbpEBJkwyOi9rMu4KLSimOGrjzaidVGP6_sbZewMEIrI/exec"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -19,13 +19,14 @@ for key, val in {
     "sb_ver": 0, 
     "up_ver": 0, 
     "selected_well": None,
-    "has_just_saved": False
+    "has_just_saved": False,
+    "last_saved_id": ""
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
 # --- 2. DATA ROUTING ---
-# We can still READ using the connection (this is faster and allowed)
+# Fetch Registry once per rerun
 reg_df = conn.read(ttl=0).astype(str)
 url_barcode = st.query_params.get("barcode")
 url_plate_id = None
@@ -53,34 +54,6 @@ def convert_10x10_to_96(well_id):
         return f"{new_row}{new_col}"
     return "EMPTY"
 
-def save_via_bridge(df_to_save, barcode, plate_name):
-    """Sends all plate data in one single batch request."""
-    try:
-        # 1. Prepare the entire block of data as a list of lists
-        # We add the plate_name to every row here
-        all_rows = []
-        for _, row in df_to_save.iterrows():
-            all_rows.append([
-                str(row['Well']), 
-                str(row['Product_Name']), 
-                str(row['SMILES']), 
-                str(plate_name)
-            ])
-        
-        # 2. Send the whole 'package' at once
-        payload = {"all_rows": all_rows}
-        resp = requests.post(BRIDGE_URL, json=payload, timeout=10) # Added timeout
-        
-        if "Success" in resp.text:
-            return True
-        else:
-            st.error(f"Server said: {resp.text}")
-            return False
-            
-    except Exception as e:
-        st.error(f"Connection Error: {e}")
-        return False
-        
 # --- 4. STYLING ---
 st.markdown("""
     <style>
@@ -119,7 +92,6 @@ with st.sidebar:
     is_viewing_saved = selected_mode != "-- New Upload --"
 
     if is_viewing_saved:
-        # We read by sheet name 'Plates'
         all_plates = conn.read(worksheet="Plates", ttl=0)
         df = all_plates[all_plates['plate_name'] == selected_mode].copy()
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES'
@@ -138,7 +110,8 @@ with st.sidebar:
 
     if not df.empty and id_col:
         df[id_col] = df[id_col].apply(normalize_well_id)
-# --- UPDATED STORAGE LOGIC ---
+
+    # --- UPDATED STORAGE LOGIC ---
     if not df.empty and not is_viewing_saved:
         st.divider()
         if not st.session_state.has_just_saved:
@@ -146,7 +119,6 @@ with st.sidebar:
             barcode = st.text_input("Barcode (8 Digits)", max_chars=8)
             save_id = st.text_input("Custom Plate Name", value="PLATE_001")
             
-            # Validation
             can_save = (len(barcode) == 8 and barcode.isdigit() and 
                         save_id not in saved_plates and 
                         str(barcode) not in reg_df['barcode'].values)
@@ -165,13 +137,13 @@ with st.sidebar:
                             str(save_id)
                         ])
                     
-                    # 2. Send Plate Data to 'Plates' tab
+                    # 2. Send Plate Data
                     resp1 = requests.post(BRIDGE_URL, json={
                         "type": "SAVE_PLATE", 
                         "all_rows": all_rows
                     })
                     
-                    # 3. Send Barcode Mapping to 'Registry' tab
+                    # 3. Send Registry Data
                     resp2 = requests.post(BRIDGE_URL, json={
                         "type": "SAVE_REGISTRY", 
                         "barcode": str(barcode), 
@@ -190,7 +162,7 @@ with st.sidebar:
             if st.button("Upload Next Plate"):
                 st.session_state.has_just_saved = False
                 st.session_state.up_ver += 1
-                st.rerun
+                st.rerun()
                 
     # --- SCANNER FORM ---
     st.divider()
@@ -220,7 +192,7 @@ with plate_col:
         for c in cols_range:
             w_id = f"{r}{c}"
             has_data = w_id in df[id_col].values if not df.empty else False
-            if row_ui[c].button(w_id, key=w_id, type="primary" if has_data else "secondary"):
+            if row_ui[c].button(w_id, key=f"btn_{w_id}", type="primary" if has_data else "secondary"):
                 st.session_state.selected_well = w_id
 
 with info_col:
