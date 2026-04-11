@@ -134,7 +134,7 @@ with st.sidebar:
                 save_df = df[[id_col, name_col, smiles_col]].copy()
                 save_df.columns, save_df['plate_name'] = ['Well', 'Product_Name', 'SMILES'], save_id
                 
-                old_plates = conn.read(worksheet="Plates", ttl=0)
+                old_plates = conn.read(worksheet="387227534", ttl=0)
                 conn.update(worksheet="Plates", data=pd.concat([old_plates, save_df]))
                 
                 new_reg = pd.concat([reg_df, pd.DataFrame([[barcode, save_id]], columns=['barcode', 'plate_name'])])
