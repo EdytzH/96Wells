@@ -138,8 +138,7 @@ with st.sidebar:
 
     if not df.empty and id_col:
         df[id_col] = df[id_col].apply(normalize_well_id)
-
-    # --- UPDATED STORAGE LOGIC ---
+# --- UPDATED STORAGE LOGIC ---
     if not df.empty and not is_viewing_saved:
         st.divider()
         if not st.session_state.has_just_saved:
@@ -147,26 +146,52 @@ with st.sidebar:
             barcode = st.text_input("Barcode (8 Digits)", max_chars=8)
             save_id = st.text_input("Custom Plate Name", value="PLATE_001")
             
+            # Validation
             can_save = (len(barcode) == 8 and barcode.isdigit() and 
                         save_id not in saved_plates and 
                         str(barcode) not in reg_df['barcode'].values)
 
             if st.button("💾 Save to Cloud", use_container_width=True, disabled=not can_save):
                 save_df = df[[id_col, name_col, smiles_col]].copy()
-                save_df.columns = ['Well', 'Product_Name', 'SMILES']
                 
-                with st.spinner("Pushing to Sheets via Bridge..."):
-                    if save_via_bridge(save_df, barcode, save_id):
+                with st.spinner("Saving Plate & Registry..."):
+                    # 1. Prepare Plate Data Batch
+                    all_rows = []
+                    for _, row in save_df.iterrows():
+                        all_rows.append([
+                            str(row[id_col]), 
+                            str(row[name_col]), 
+                            str(row[smiles_col]), 
+                            str(save_id)
+                        ])
+                    
+                    # 2. Send Plate Data to 'Plates' tab
+                    resp1 = requests.post(BRIDGE_URL, json={
+                        "type": "SAVE_PLATE", 
+                        "all_rows": all_rows
+                    })
+                    
+                    # 3. Send Barcode Mapping to 'Registry' tab
+                    resp2 = requests.post(BRIDGE_URL, json={
+                        "type": "SAVE_REGISTRY", 
+                        "barcode": str(barcode), 
+                        "plate_name": str(save_id)
+                    })
+                    
+                    if "Success" in resp1.text and "Success" in resp2.text:
+                        st.success("Full Save Complete!")
                         st.session_state.has_just_saved = True
                         st.session_state.last_saved_id = barcode
                         st.rerun()
+                    else:
+                        st.error(f"Error: {resp1.text} / {resp2.text}")
         else:
             st.success(f"✅ Saved! Barcode: {st.session_state.last_saved_id}")
             if st.button("Upload Next Plate"):
                 st.session_state.has_just_saved = False
                 st.session_state.up_ver += 1
-                st.rerun()
-
+                st.rerun
+                
     # --- SCANNER FORM ---
     st.divider()
     with st.form("scan_form", clear_on_submit=True):
