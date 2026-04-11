@@ -59,6 +59,13 @@ st.markdown("""
 
 # --- SIDEBAR SETUP ---
 with st.sidebar:
+    st.divider()
+    st.subheader("Admin: Download Data")
+    if os.path.exists("saved_plates"):
+        files = os.listdir("saved_plates")
+        for f in files:
+            with open(f"saved_plates/{f}", "rb") as file:
+                st.download_button(label=f"💾 Download {f}", data=file, file_name=f)   
     st.header("1. Data Setup")
 
     if "sb_ver" not in st.session_state:
