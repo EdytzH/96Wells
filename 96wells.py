@@ -127,31 +127,28 @@ with st.sidebar:
                 save_df = df[[id_col, name_col, smiles_col]].copy()
                 
                 with st.spinner("Saving Plate & Registry..."):
-                    # 1. Prepare Plate Data Batch
+                    # 1. Prepare CLEAN Plate Data (Removes 'dtype' junk)
                     all_rows = []
-                    for index, row in save_df.iterrows():
-                        well_val = str(row[id_col])
-                        name_val = str(row[name_col])
-                        smiles_val = str(row[smiles_col])
-
+                    for _, row in save_df.iterrows():
                         all_rows.append([
-                            well_val, 
-                            name_val, 
-                            smiles_val, 
+                            str(row[id_col]), 
+                            str(row[name_col]), 
+                            str(row[smiles_col]), 
                             str(save_id)
                         ])
-                        
-                    # 2. Send Plate Data
+                    
+                    # 2. Call Bridge: SAVE_PLATE
                     resp1 = requests.post(BRIDGE_URL, json={
                         "type": "SAVE_PLATE", 
                         "all_rows": all_rows
                     })
                     
-                    # 3. Send Registry Data
+                    # 3. Call Bridge: SAVE_REGISTRY (using gid 300117596)
                     resp2 = requests.post(BRIDGE_URL, json={
                         "type": "SAVE_REGISTRY", 
                         "barcode": str(barcode), 
-                        "plate_name": str(save_id)
+                        "plate_name": str(save_id),
+                        "registry_gid": 300117596
                     })
                     
                     if "Success" in resp1.text and "Success" in resp2.text:
@@ -160,7 +157,7 @@ with st.sidebar:
                         st.session_state.last_saved_id = barcode
                         st.rerun()
                     else:
-                        st.error(f"Error: {resp1.text} / {resp2.text}")
+                        st.error(f"Error: P:{resp1.text} | R:{resp2.text}")
         else:
             st.success(f"✅ Saved! Barcode: {st.session_state.last_saved_id}")
             if st.button("Upload Next Plate"):
