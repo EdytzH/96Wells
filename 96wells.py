@@ -9,7 +9,7 @@ import json
 st.set_page_config(layout="wide", page_title="96-Well Lab Plate")
 
 # Use the bridge URL you generated
-BRIDGE_URL = "https://script.google.com/macros/s/AKfycbyV8tfalVl1a15h9Xs9eB9poXP-uPD7qKpEXP6j2vOIbPU67jx_RsIFU7EuYaGswGW7/exec"
+BRIDGE_URL = "https://script.google.com/macros/s/AKfycbwEW5AT5W8t2Pqmrae5NkzLEbpEBJkwyOi9rMu4KLSimOGrjzaidVGP6_sbZewMEIrI/exec"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
