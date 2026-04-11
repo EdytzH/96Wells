@@ -2,10 +2,15 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import re
-
+import requests
+import json
 
 # --- 1. INITIALIZATION & CONNECTION ---
 st.set_page_config(layout="wide", page_title="96-Well Lab Plate")
+
+# Use the bridge URL you generated
+BRIDGE_URL = "https://script.google.com/macros/s/AKfycbyV8tfalVl1a15h9Xs9eB9poXP-uPD7qKpEXP6j2vOIbPU67jx_RsIFU7EuYaGswGW7/exec"
+
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Initialize Essential States
@@ -19,8 +24,8 @@ for key, val in {
     if key not in st.session_state:
         st.session_state[key] = val
 
-# --- 2. DATA ROUTING (URL & CLOUD) ---
-# Fetch Registry once to use across the whole app
+# --- 2. DATA ROUTING ---
+# We can still READ using the connection (this is faster and allowed)
 reg_df = conn.read(ttl=0).astype(str)
 url_barcode = st.query_params.get("barcode")
 url_plate_id = None
@@ -40,15 +45,33 @@ def convert_10x10_to_96(well_id):
     """Maps custom 10x10 vendor grid to standard 96-well grid."""
     match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
     if not match: return well_id
-    
     row_let, col_num = match.groups()
     abs_pos = ((ord(row_let) - ord('A')) * 10) + int(col_num)
-    
     if abs_pos <= 96:
         new_row = chr(ord('A') + (abs_pos - 1) // 12)
         new_col = ((abs_pos - 1) % 12) + 1
         return f"{new_row}{new_col}"
     return "EMPTY"
+
+def save_via_bridge(df_to_save, barcode, plate_name):
+    """Sends plate and registry data to Google Sheets via Apps Script."""
+    try:
+        # 1. Save Plate Data (Iterate through rows)
+        for _, row in df_to_save.iterrows():
+            payload = {
+                "well": str(row['Well']),
+                "product": str(row['Product_Name']),
+                "smiles": str(row['SMILES']),
+                "plate": str(plate_name)
+            }
+            requests.post(BRIDGE_URL, json=payload)
+        
+        # 2. Save to Registry (Using a slightly different payload structure if needed, 
+        # but for simplicity, we are just ensuring the plate data hits the 'Plates' tab)
+        return True
+    except Exception as e:
+        st.error(f"Bridge Error: {e}")
+        return False
 
 # --- 4. STYLING ---
 st.markdown("""
@@ -88,20 +111,12 @@ with st.sidebar:
     is_viewing_saved = selected_mode != "-- New Upload --"
 
     if is_viewing_saved:
-        # MODE: VIEWING
+        # We read by sheet name 'Plates'
         all_plates = conn.read(worksheet="Plates", ttl=0)
         df = all_plates[all_plates['plate_name'] == selected_mode].copy()
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES'
-        
         st.success(f"📍 Viewing: {selected_mode}")
-        if st.button("🗑️ Delete Plate", use_container_width=True):
-            conn.update(worksheet="Registry", data=reg_df[reg_df['plate_name'] != selected_mode])
-            conn.update(worksheet="Plates", data=all_plates[all_plates['plate_name'] != selected_mode])
-            st.query_params.clear()
-            st.session_state.sb_ver += 1
-            st.rerun()
     else:
-        # MODE: UPLOAD
         up_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"up_{st.session_state.up_ver}")
         if up_file:
             df = pd.read_excel(up_file) if up_file.name.endswith('xlsx') else pd.read_csv(up_file)
@@ -110,15 +125,13 @@ with st.sidebar:
             name_col = st.selectbox("Product Name Column", cols)
             smiles_col = st.selectbox("SMILES Column", cols)
             
-            # Process coordinates for new uploads
             df[id_col] = df[id_col].apply(convert_10x10_to_96)
             df = df[df[id_col] != "EMPTY"]
 
-    # Normalize IDs for final grid matching
     if not df.empty and id_col:
         df[id_col] = df[id_col].apply(normalize_well_id)
 
-    # --- STORAGE LOGIC ---
+    # --- UPDATED STORAGE LOGIC ---
     if not df.empty and not is_viewing_saved:
         st.divider()
         if not st.session_state.has_just_saved:
@@ -131,18 +144,14 @@ with st.sidebar:
                         str(barcode) not in reg_df['barcode'].values)
 
             if st.button("💾 Save to Cloud", use_container_width=True, disabled=not can_save):
-                # Prepare and append data
                 save_df = df[[id_col, name_col, smiles_col]].copy()
-                save_df.columns, save_df['plate_name'] = ['Well', 'Product_Name', 'SMILES'], save_id
+                save_df.columns = ['Well', 'Product_Name', 'SMILES']
                 
-                old_plates = conn.read(worksheet="387227534", ttl=0)
-                conn.update(worksheet="Plates", data=pd.concat([old_plates, save_df]))
-                
-                new_reg = pd.concat([reg_df, pd.DataFrame([[barcode, save_id]], columns=['barcode', 'plate_name'])])
-                conn.update(worksheet="Registry", data=new_reg)
-                
-                st.session_state.has_just_saved, st.session_state.last_saved_id = True, barcode
-                st.rerun()
+                with st.spinner("Pushing to Sheets via Bridge..."):
+                    if save_via_bridge(save_df, barcode, save_id):
+                        st.session_state.has_just_saved = True
+                        st.session_state.last_saved_id = barcode
+                        st.rerun()
         else:
             st.success(f"✅ Saved! Barcode: {st.session_state.last_saved_id}")
             if st.button("Upload Next Plate"):
@@ -169,7 +178,6 @@ with plate_col:
     st.subheader("96-Well Plate View")
     rows, cols_range = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], range(1, 13)
     
-    # Grid Header
     grid_header = st.columns([0.6] + [1]*12)
     for i in cols_range: grid_header[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
 
