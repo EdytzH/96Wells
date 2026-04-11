@@ -54,25 +54,33 @@ def convert_10x10_to_96(well_id):
     return "EMPTY"
 
 def save_via_bridge(df_to_save, barcode, plate_name):
-    """Sends plate and registry data to Google Sheets via Apps Script."""
+    """Sends all plate data in one single batch request."""
     try:
-        # 1. Save Plate Data (Iterate through rows)
+        # 1. Prepare the entire block of data as a list of lists
+        # We add the plate_name to every row here
+        all_rows = []
         for _, row in df_to_save.iterrows():
-            payload = {
-                "well": str(row['Well']),
-                "product": str(row['Product_Name']),
-                "smiles": str(row['SMILES']),
-                "plate": str(plate_name)
-            }
-            requests.post(BRIDGE_URL, json=payload)
+            all_rows.append([
+                str(row['Well']), 
+                str(row['Product_Name']), 
+                str(row['SMILES']), 
+                str(plate_name)
+            ])
         
-        # 2. Save to Registry (Using a slightly different payload structure if needed, 
-        # but for simplicity, we are just ensuring the plate data hits the 'Plates' tab)
-        return True
+        # 2. Send the whole 'package' at once
+        payload = {"all_rows": all_rows}
+        resp = requests.post(BRIDGE_URL, json=payload, timeout=10) # Added timeout
+        
+        if "Success" in resp.text:
+            return True
+        else:
+            st.error(f"Server said: {resp.text}")
+            return False
+            
     except Exception as e:
-        st.error(f"Bridge Error: {e}")
+        st.error(f"Connection Error: {e}")
         return False
-
+        
 # --- 4. STYLING ---
 st.markdown("""
     <style>
