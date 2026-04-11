@@ -27,7 +27,7 @@ for key, val in {
 
 # --- 2. DATA ROUTING ---
 # Fetch Registry once per rerun
-reg_df = conn.read(ttl=0).astype(str)
+reg_df = conn.read(worksheet="Registry", ttl=0).astype(str)
 url_barcode = st.query_params.get("barcode")
 url_plate_id = None
 
