@@ -129,14 +129,18 @@ with st.sidebar:
                 with st.spinner("Saving Plate & Registry..."):
                     # 1. Prepare Plate Data Batch
                     all_rows = []
-                    for _, row in save_df.iterrows():
+                    for index, row in save_df.iterrows():
+                        well_val = str(row[id_col])
+                        name_val = str(row[name_col])
+                        smiles_val = str(row[smiles_col])
+
                         all_rows.append([
-                            str(row[id_col]), 
-                            str(row[name_col]), 
-                            str(row[smiles_col]), 
+                            well_val, 
+                            name_val, 
+                            smiles_val, 
                             str(save_id)
                         ])
-                    
+                        
                     # 2. Send Plate Data
                     resp1 = requests.post(BRIDGE_URL, json={
                         "type": "SAVE_PLATE", 
