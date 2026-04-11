@@ -27,7 +27,22 @@ for key, val in {
 
 # --- 2. DATA ROUTING ---
 # Fetch Registry once per rerun
-reg_df = conn.read(worksheet="Registry", ttl=0).astype(str)
+# --- UPDATED DATA ROUTING (Using GID) ---
+# Replace SHEET_URL with your actual public Google Sheet URL
+SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
+REGISTRY_GID = "300117596"
+
+# Construct a direct CSV export link for the specific GID
+# This often bypasses the authentication loops that worksheet names cause
+registry_csv_url = f"{SHEET_URL.split('/edit')[0]}/export?format=csv&gid={REGISTRY_GID}"
+
+try:
+    # We use pandas directly to read the CSV export link
+    reg_df = pd.read_csv(registry_csv_url).astype(str)
+except Exception as e:
+    st.error(f"Could not access Registry GID {REGISTRY_GID}. Ensure the sheet is shared as 'Anyone with the link can view'.")
+    st.stop()
+    
 url_barcode = st.query_params.get("barcode")
 url_plate_id = None
 
