@@ -1,231 +1,353 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
-import re
-import requests
-import json
+import os
 
-# --- 1. INITIALIZATION & CONNECTION ---
-st.set_page_config(layout="wide", page_title="96-Well Lab Plate")
+# --- TOP OF SCRIPT LOGIC ---
+if "scanned_plate" not in st.session_state:
+    st.session_state.scanned_plate = None
 
-# Bridge URL for Apps Script
-BRIDGE_URL = "https://script.google.com/macros/s/AKfycbwEW5AT5W8t2Pqmrae5NkzLEbpEBJkwyOi9rMu4KLSimOGrjzaidVGP6_sbZewMEIrI/exec"
+# Check for a physical scan before drawing the UI
+query_params = st.query_params
+url_barcode = query_params.get("barcode")
+registry_path = "saved_plates/barcode_registry.csv"
 
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Initialize Essential States
-for key, val in {
-    "scanned_plate": None, 
-    "sb_ver": 0, 
-    "up_ver": 0, 
-    "selected_well": None,
-    "has_just_saved": False,
-    "last_saved_id": ""
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
-
-# --- 2. DATA ROUTING ---
-# Fetch Registry once per rerun
-# --- UPDATED DATA ROUTING (Using GID) ---
-# Replace SHEET_URL with your actual public Google Sheet URL
-SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
-REGISTRY_GID = "300117596"
-
-# Construct a direct CSV export link for the specific GID
-# This often bypasses the authentication loops that worksheet names cause
-registry_csv_url = f"{SHEET_URL.split('/edit')[0]}/export?format=csv&gid={REGISTRY_GID}"
-
-try:
-    # We use pandas directly to read the CSV export link
-    reg_df = pd.read_csv(registry_csv_url).astype(str)
-except Exception as e:
-    st.error(f"Could not access Registry GID {REGISTRY_GID}. Ensure the sheet is shared as 'Anyone with the link can view'.")
-    st.stop()
-    
-url_barcode = st.query_params.get("barcode")
-url_plate_id = None
-
-if url_barcode and not reg_df.empty:
-    match = reg_df[reg_df['barcode'] == str(url_barcode)]
+if url_barcode and os.path.exists(registry_path):
+    reg_df = pd.read_csv(registry_path)
+    match = reg_df[reg_df['barcode'].astype(str) == str(url_barcode)]
     if not match.empty:
         st.session_state.scanned_plate = match['plate_name'].values[0]
-        url_plate_id = st.session_state.scanned_plate
 
-# --- 3. HELPER FUNCTIONS ---
-def normalize_well_id(well_id):
-    """Standardizes well names (e.g., A01 -> A1)."""
-    return re.sub(r'([A-H])0(\d)', r'\1\2', str(well_id).strip().upper())
+# --- NEW: STORAGE ENGINE SETUP ---
+if not os.path.exists("saved_plates"):
+    os.makedirs("saved_plates")
 
-def convert_10x10_to_96(well_id):
-    """Maps custom 10x10 vendor grid to standard 96-well grid."""
-    match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
-    if not match: return well_id
-    row_let, col_num = match.groups()
-    abs_pos = ((ord(row_let) - ord('A')) * 10) + int(col_num)
-    if abs_pos <= 96:
-        new_row = chr(ord('A') + (abs_pos - 1) // 12)
-        new_col = ((abs_pos - 1) % 12) + 1
-        return f"{new_row}{new_col}"
-    return "EMPTY"
+# --- 1. HANDLE BARCODE/URL LINKING ---
+query_params = st.query_params
+url_plate_id = query_params.get("plate")
+url_barcode = query_params.get("barcode")
 
-# --- 4. STYLING ---
+# Registry path to bridge Barcode -> Plate Name
+registry_path = "saved_plates/barcode_registry.csv"
+
+# If a barcode is provided, find the associated plate name
+if url_barcode and os.path.exists(registry_path):
+    reg_df = pd.read_csv(registry_path)
+    match = reg_df[reg_df['barcode'].astype(str) == str(url_barcode)]
+    if not match.empty:
+        url_plate_id = match['plate_name'].values[0]
+
+if "cloud_df" not in st.session_state:
+    st.session_state.cloud_df = None
+
+st.set_page_config(layout="wide", page_title="96-Well Lab Plate")
+
+# --- CSS (UNCHANGED) ---
 st.markdown("""
     <style>
-    [data-testid="stMain"] button[kind="primary"], [data-testid="stMain"] button[kind="secondary"] {
+    [data-testid="stMain"] button[kind="primary"], 
+    [data-testid="stMain"] button[kind="secondary"] {
         display: flex !important; align-items: center !important; justify-content: center !important;
         border-radius: 50% !important; width: 40px !important; height: 40px !important;
-        padding: 0px !important; margin: auto !important;
+        padding: 0px !important; margin: auto !important; line-height: 40px !important;
     }
+    [data-testid="stSidebar"] button { border-radius: 4px !important; width: auto !important; height: auto !important; padding: 8px 16px !important; }
     button[kind="primary"] { background-color: #C1E1C1 !important; color: #2E7D32 !important; border: 1px solid #A5D6A7 !important; }
-    .well-id-header { font-size: 26px; font-weight: 800; color: #4A90E2; }
-    .label-text { font-weight: bold; text-align: center; color: #bbb; font-size: 14px; }
+    .well-id-header { font-size: 26px; font-weight: 800; color: #4A90E2; margin-bottom: 5px; }
+    .label-text { font-weight: bold; text-align: center; color: #bbb; margin: 0; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 5. SIDEBAR: DATA CONTROLS ---
+# --- SIDEBAR SETUP ---
 with st.sidebar:
     st.header("1. Data Setup")
-    saved_plates = reg_df['plate_name'].unique().tolist() if not reg_df.empty else []
 
-    # Dropdown logic
-    start_idx = 0
-    if st.session_state.scanned_plate in saved_plates:
-        start_idx = saved_plates.index(st.session_state.scanned_plate) + 1
+    if "sb_ver" not in st.session_state:
+        st.session_state.sb_ver = 0
+    
+   # 1. Fetch saved plates
+    # We use a list comprehension to get all CSVs EXCEPT the barcode_registry
+    if not os.path.exists("saved_plates"):
+        os.makedirs("saved_plates")
+        
+    all_csvs = [f for f in os.listdir("saved_plates") if f.endswith(".csv")]
+    
+    # Filter: Keep everything EXCEPT the registry
+    saved_files = [f.replace(".csv", "") for f in all_csvs if f != "barcode_registry.csv"]
+
+
+    start_index = 0
+    
+    # ADDED: If we are in "upload" mode, force index 0
+    if st.session_state.get("view_mode") == "upload":
+        start_index = 0
+    # Priority 1: Was a barcode just scanned?
+    elif st.session_state.scanned_plate in saved_files:
+        start_index = saved_files.index(st.session_state.scanned_plate) + 1
         st.session_state.scanned_plate = None 
-    elif url_plate_id in saved_plates:
-        start_idx = saved_plates.index(url_plate_id) + 1
+    # Priority 2: Is there a plate ID in the URL?
+    elif url_plate_id and url_plate_id in saved_files:
+        start_index = saved_files.index(url_plate_id) + 1
 
-    selected_mode = st.selectbox(
+    selected_saved = st.selectbox(
         "📂 Load a Saved Plate", 
-        options=["-- New Upload --"] + saved_plates,
-        index=start_idx,
-        key=f"selector_{st.session_state.sb_ver}"
+        options=["-- New Upload --"] + saved_files,
+        index=start_index,
+        # This key changes when you click 'Upload New', forcing a reset
+        key=f"sidebar_selector_{st.session_state.sb_ver}" 
     )
 
-    df, id_col, name_col, smiles_col = pd.DataFrame(), None, None, None
-    is_viewing_saved = selected_mode != "-- New Upload --"
+    df = pd.DataFrame()
+    id_col, name_col, smiles_col = None, None, None
+    is_viewing_saved = False
 
-    if is_viewing_saved:
-        all_plates = conn.read(worksheet="Plates", ttl=0)
-        df = all_plates[all_plates['plate_name'] == selected_mode].copy()
+# --- MODE A: VIEWING A SAVED PLATE ---
+    if selected_saved != "-- New Upload --":
+        is_viewing_saved = True
+        df = pd.read_csv(f"saved_plates/{selected_saved}.csv")
         id_col, name_col, smiles_col = 'Well', 'Product_Name', 'SMILES'
-        st.success(f"📍 Viewing: {selected_mode}")
-    else:
-        up_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"up_{st.session_state.up_ver}")
-        if up_file:
-            df = pd.read_excel(up_file) if up_file.name.endswith('xlsx') else pd.read_csv(up_file)
-            cols = df.columns.tolist()
-            id_col = st.selectbox("Well ID Column", cols)
-            name_col = st.selectbox("Product Name Column", cols)
-            smiles_col = st.selectbox("SMILES Column", cols)
+        
+        st.success(f"📍 Viewing: {selected_saved}")
+        
+        # --- BARCODE LINK VIEW REMOVED ---
+        
+        st.write("")
+        if st.button("🗑️ Delete Plate", key="del_btn", type="secondary", use_container_width=True):
+            # 1. Define paths
+            file_to_delete = f"saved_plates/{selected_saved}.csv"
             
-            df[id_col] = df[id_col].apply(convert_10x10_to_96)
-            df = df[df[id_col] != "EMPTY"]
-
-    if not df.empty and id_col:
-        df[id_col] = df[id_col].apply(normalize_well_id)
-
-    # --- UPDATED STORAGE LOGIC ---
-    if not df.empty and not is_viewing_saved:
-        st.divider()
-        if not st.session_state.has_just_saved:
-            st.subheader("2. Permanent Storage")
-            barcode = st.text_input("Barcode (8 Digits)", max_chars=8)
-            save_id = st.text_input("Custom Plate Name", value="PLATE_001")
+            # 2. Delete the actual Plate CSV
+            if os.path.exists(file_to_delete):
+                os.remove(file_to_delete)
             
-            can_save = (len(barcode) == 8 and barcode.isdigit() and 
-                        save_id not in saved_plates and 
-                        str(barcode) not in reg_df['barcode'].values)
-
-            if st.button("💾 Save to Cloud", use_container_width=True, disabled=not can_save):
-                save_df = df[[id_col, name_col, smiles_col]].copy()
+            # 3. Scrub the Barcode Registry
+            if os.path.exists(registry_path):
+                reg_df = pd.read_csv(registry_path)
                 
-                with st.spinner("Saving Plate & Registry..."):
-                    # 1. Prepare Plate Data Batch
-                    all_rows = []
-                    for index, row in save_df.iterrows():
-                        well_val = str(row[id_col])
-                        name_val = str(row[name_col])
-                        smiles_val = str(row[smiles_col])
-
-                        all_rows.append([
-                            well_val, 
-                            name_val, 
-                            smiles_val, 
-                            str(save_id)
-                        ])
-                        
-                    # 2. Send Plate Data
-                    resp1 = requests.post(BRIDGE_URL, json={
-                        "type": "SAVE_PLATE", 
-                        "all_rows": all_rows
-                    })
-                    
-                    # 3. Send Registry Data
-                    resp2 = requests.post(BRIDGE_URL, json={
-                        "type": "SAVE_REGISTRY", 
-                        "barcode": str(barcode), 
-                        "plate_name": str(save_id)
-                    })
-                    
-                    if "Success" in resp1.text and "Success" in resp2.text:
-                        st.success("Full Save Complete!")
-                        st.session_state.has_just_saved = True
-                        st.session_state.last_saved_id = barcode
-                        st.rerun()
-                    else:
-                        st.error(f"Error: {resp1.text} / {resp2.text}")
-        else:
-            st.success(f"✅ Saved! Barcode: {st.session_state.last_saved_id}")
-            if st.button("Upload Next Plate"):
-                st.session_state.has_just_saved = False
-                st.session_state.up_ver += 1
-                st.rerun()
+                # Use a very strict filter to remove the plate
+                # We strip spaces just in case 'PLATE_001 ' was saved instead of 'PLATE_001'
+                reg_df['plate_name'] = reg_df['plate_name'].astype(str).str.strip()
+                target_name = str(selected_saved).strip()
                 
-    # --- SCANNER FORM ---
-    st.divider()
-    with st.form("scan_form", clear_on_submit=True):
-        scan_input = st.text_input("🔍 Scan Barcode")
-        if st.form_submit_button("Search", use_container_width=True) and scan_input:
-            if str(scan_input) in reg_df['barcode'].values:
-                st.query_params["barcode"] = scan_input
+                # Keep only rows that DO NOT match the deleted plate
+                new_reg_df = reg_df[reg_df['plate_name'] != target_name]
+                
+                # Save the cleaned registry back to disk
+                new_reg_df.to_csv(registry_path, index=False)
+            
+            # 4. Clear the UI and the URL
+            st.query_params.clear()
+            # Bump the sidebar version to force the dropdown to reset to "-- New Upload --"
+            if "sb_ver" in st.session_state:
                 st.session_state.sb_ver += 1
+            
+            st.rerun()
+            
+        if st.button("➕ Upload New Plate", key="new_up_btn", use_container_width=True):
+            st.query_params.clear()
+            
+            # --- ADD THIS LINE TO HIDE THE OLD SUCCESS BUBBLES ---
+            st.session_state.has_just_saved = False
+            
+            # Bumping the version resets the dropdown memory
+            if "sb_ver" in st.session_state:
+                st.session_state.sb_ver += 1
+            
+            st.rerun()
+
+# --- MODE B: NEW UPLOAD ---
+    else:
+        if "up_ver" not in st.session_state: st.session_state.up_ver = 0
+        
+        uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"file_uploader_{st.session_state.up_ver}")
+        
+        if uploaded_file:
+            # --- NEW: RESET STATE IF A NEW FILE IS DETECTED ---
+            # If the filename is different from the last one we processed, clear the "Success" view
+            if st.session_state.get("last_uploaded_name") != uploaded_file.name:
+                st.session_state.has_just_saved = False
+                st.session_state.selected_well = None
+                st.session_state.last_uploaded_name = uploaded_file.name
+                # Note: We don't st.rerun here to avoid upload loops
+
+            try:
+                # Load the data
+                df = pd.read_excel(uploaded_file, engine='openpyxl') if uploaded_file.name.endswith('xlsx') else pd.read_csv(uploaded_file)
+                cols = df.columns.tolist()
+                
+                # Column Selectors
+                id_col = st.selectbox("Well ID Column", options=cols, key="id_sel")
+                name_col = st.selectbox("Product Name Column", options=cols, key="name_sel")
+                smiles_col = st.selectbox("SMILES Column", options=cols, key="smiles_sel")
+                
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+                st.stop()
+
+  # --- 3. STORAGE LOGIC (Inside Sidebar) ---
+    if not df.empty and id_col and name_col and smiles_col:
+        
+        # --- CRITICAL FIX: Only run the 10x10 conversion for NEW uploads ---
+        if not is_viewing_saved:
+            def convert_10x10_to_96(well_id):
+                import re
+                # Clean input
+                match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
+                if not match: return well_id
+                
+                row_let, col_num = match.groups()
+                r_idx = ord(row_let) - ord('A') 
+                c_idx = int(col_num)           
+                
+                # Absolute position in 10x10 grid (1 to 100)
+                abs_pos = (r_idx * 10) + c_idx 
+                
+                if abs_pos <= 96:
+                    new_row_idx = (abs_pos - 1) // 12
+                    new_row_let = chr(ord('A') + new_row_idx)
+                    new_col_num = ((abs_pos - 1) % 12) + 1
+                    return f"{new_row_let}{new_col_num}"
+                return "EMPTY"
+
+            # Apply conversion
+            df[id_col] = df[id_col].apply(convert_10x10_to_96)
+            # Remove J7-J10
+            df = df[df[id_col] != "EMPTY"]
+        
+
+        # Only run the regex if the column exists in the current data
+        if id_col in df.columns:
+            df[id_col] = df[id_col].astype(str).str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
+        
+       # --- SAVE UI (Only shows if it's a new upload) ---
+        if not is_viewing_saved:
+            st.divider()
+            
+            if not st.session_state.get("has_just_saved", False):
+                st.subheader("2. Permanent Storage")
+                
+                # New Dual Input
+                barcode = st.text_input("Physical Barcode (8 Digits)", max_chars=8, key="bc_input")
+                save_id = st.text_input("Custom Plate Name", value="PLATE_001", key="save_id_input")
+                
+                # Logic for duplicates/validation
+                is_valid_bc = len(barcode) == 8 and barcode.isdigit()
+                file_exists = os.path.exists(f"saved_plates/{save_id}.csv")
+                
+                bc_exists = False
+                if os.path.exists(registry_path):
+                    reg_df = pd.read_csv(registry_path)
+                    bc_exists = str(barcode) in reg_df['barcode'].astype(str).values
+
+                if barcode and not is_valid_bc: st.warning("⚠️ Barcode must be 8 digits.")
+                if bc_exists: st.error("⚠️ Barcode already linked to a plate.")
+                if file_exists: st.error(f"⚠️ Name '{save_id}' already exists.")
+
+                # Button is only clickable if barcode is valid and nothing is a duplicate
+                can_save = is_valid_bc and not bc_exists and not file_exists and save_id.strip()
+
+                if st.button("💾 Save & Link Barcode", key="save_btn", use_container_width=True, disabled=not can_save):
+                    # 1. Save the Plate CSV
+                    save_df = df[[id_col, name_col, smiles_col]].copy()
+                    save_df.columns = ['Well', 'Product_Name', 'SMILES']
+                    save_df.to_csv(f"saved_plates/{save_id}.csv", index=False)
+                    
+                    # 2. Save to Registry
+                    new_entry = pd.DataFrame([[barcode, save_id]], columns=['barcode', 'plate_name'])
+                    new_entry.to_csv(registry_path, mode='a', header=not os.path.exists(registry_path), index=False)
+                    
+                    st.session_state.has_just_saved = True
+                    st.session_state.last_saved_id = barcode # Link via Barcode
+                    st.session_state.last_saved_name = save_id
+                    st.rerun()
+            else:
+                # SUCCESS VIEW
+                import urllib.parse
+                s_bc = st.session_state.last_saved_id
+                unique_url = f"96wells.streamlit.app/?barcode={urllib.parse.quote(str(s_bc))}"
+                
+                st.success(f"✅ {st.session_state.last_saved_name} Linked to {s_bc}!")
+                st.info(f"{unique_url}")
+                
+                if st.button("Start Next Upload", key="reset_after_save", use_container_width=True):
+                    st.session_state.has_just_saved = False
+                    st.session_state.up_ver += 1
+                    st.rerun()
+
+    st.subheader("🔍 Scan Plate")
+    
+    with st.form("barcode_form", clear_on_submit=True):
+        scan_val = st.text_input("Click & Scan Barcode")
+        submitted = st.form_submit_button("Submit Scan", use_container_width=True)
+        
+        if submitted and scan_val:
+            # 1. Check if registry exists and barcode is inside
+            found = False
+            if os.path.exists(registry_path):
+                reg_df = pd.read_csv(registry_path)
+                if str(scan_val) in reg_df['barcode'].astype(str).values:
+                    found = True
+            
+            if found:
+                # SUCCESS: Update URL and reset dropdown
+                st.query_params["barcode"] = scan_val
+                if "sb_ver" in st.session_state:
+                    st.session_state.sb_ver += 1
+                st.session_state.scan_error = None # Clear any old errors
                 st.rerun()
             else:
-                st.error("Barcode not found.")
+                # FAILURE: Set error message
+                st.session_state.scan_error = f"❌ Barcode '{scan_val}' not found in registry."
+                st.rerun()
 
-# --- 6. MAIN INTERFACE ---
+    # Display the error message if it exists
+    if st.session_state.get("scan_error"):
+        st.error(st.session_state.scan_error)
+        # Optional: Clear the error after it's shown once
+        st.session_state.scan_error = None
+
+
+
+# --- MAIN INTERFACE (UNCHANGED) ---
 plate_col, info_col = st.columns([1.7, 1])
 
 with plate_col:
-    st.subheader("96-Well Plate View")
-    rows, cols_range = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], range(1, 13)
-    
-    grid_header = st.columns([0.6] + [1]*12)
-    for i in cols_range: grid_header[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
+    st.subheader("96-Well Plate")
+    rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+    h_cols = st.columns([0.6] + [1]*12)
+    for i in range(1, 13): h_cols[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
 
     for r in rows:
-        row_ui = st.columns([0.6] + [1]*12)
-        row_ui[0].markdown(f'<p class="label-text" style="margin-top:10px">{r}</p>', unsafe_allow_html=True)
-        for c in cols_range:
-            w_id = f"{r}{c}"
-            has_data = w_id in df[id_col].values if not df.empty else False
-            if row_ui[c].button(w_id, key=f"btn_{w_id}", type="primary" if has_data else "secondary"):
-                st.session_state.selected_well = w_id
+        row_cells = st.columns([0.6] + [1]*12)
+        row_cells[0].markdown(f'<p class="label-text" style="padding-top:10px">{r}</p>', unsafe_allow_html=True)
+        for c in range(1, 13):
+            well_id = f"{r}{c}"
+            # Use 'Well' if loaded from save, else use id_col
+            search_col = 'Well' if 'Well' in df.columns else id_col
+            has_data = well_id in df[search_col].values if not df.empty and search_col in df.columns else False
+            
+            if row_cells[c].button(well_id, key=well_id, type="primary" if has_data else "secondary"):
+                st.session_state.selected_well = well_id
 
 with info_col:
-    sel = st.session_state.selected_well
-    if sel:
-        st.markdown(f'<div class="well-id-header">Well {sel}</div>', unsafe_allow_html=True)
-        well_data = df[df[id_col] == sel] if not df.empty else pd.DataFrame()
+    selected = st.session_state.get('selected_well')
+    if selected:
+        search_col = 'Well' if 'Well' in df.columns else id_col
+        disp_name = 'Product_Name' if 'Product_Name' in df.columns else name_col
+        disp_smiles = 'SMILES' if 'SMILES' in df.columns else smiles_col
+        
+        well_data = df[df[search_col] == selected] if not df.empty and search_col else pd.DataFrame()
+        
+        st.markdown(f'<div style="margin-left: 40px;"><div class="well-id-header">Well {selected}</div>', unsafe_allow_html=True)
         
         if not well_data.empty:
-            st.markdown(f"### {well_data[name_col].values[0]}")
-            smiles = well_data[smiles_col].values[0]
-            if pd.isna(smiles) or not str(smiles).strip():
-                st.caption("No SMILES data available.")
+            product_val = well_data[disp_name].values[0]
+            st.markdown(f'<div style="color: #2E7D32; font-size: 22px; font-weight: 600; margin-top: 5px; margin-left: 40px;">{product_val}</div>', unsafe_allow_html=True)
+
+            smiles_val = well_data[disp_smiles].values[0]
+            if pd.isna(smiles_val) or str(smiles_val).strip().lower() in ["", "nan"]:
+                st.markdown(f'<div style="color: #FFB6C1; font-size: 14px; font-style: italic; margin-top: 10px; margin-left: 40px;">No SMILE found</div>', unsafe_allow_html=True)
             else:
-                st.code(smiles, language=None)
+                st.markdown(f'<div style="color: #FFB6C1; font-size: 16px; font-family: monospace; font-weight: 500; margin-top: 10px; margin-left: 40px; word-break: break-all;">{smiles_val}</div>', unsafe_allow_html=True)
         else:
-            st.write("No sample in this well.")
+            st.markdown('<div style="margin-left: 40px; color: #999;">No data assigned.</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
