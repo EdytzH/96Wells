@@ -104,8 +104,8 @@ with st.sidebar:
             cols = df.columns.tolist()
 
             w_idx = find_best_match(cols, ["well", "location", "position", "id"])
-            p_idx = find_best_match(cols, ["product", "name", "compound", "label"])
-            s_idx = find_best_match(cols, ["smiles", "structure"])
+            p_idx = find_best_match(cols, ["product", "name", "compound", "chemical"])
+            s_idx = find_best_match(cols, ["smiles", "smile"])
 
             c_hash = hash(tuple(cols))
             id_col = st.selectbox("Well ID Column", options=cols, index=w_idx, key=f"well_{c_hash}")
