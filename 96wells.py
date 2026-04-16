@@ -80,12 +80,19 @@ with st.sidebar:
     is_viewing_saved = selected_saved != "-- New Upload --"
 
     if is_viewing_saved:
+        # 1. Fetch the barcode for the current plate
+        bc_res = supabase.table("barcode_registry").select("barcode").eq("plate_name", selected_saved).execute()
+        current_barcode = bc_res.data[0]['barcode'] if bc_res.data else "Unknown"
+
+        # 2. Existing well data fetch
         well_res = supabase.table("well_data").select("*").eq("plate_name", selected_saved).execute()
         df = pd.DataFrame(well_res.data)
+        
         if not df.empty:
             df = df.rename(columns={'well': 'Well', 'product_name': 'Product_Name', 'smiles': 'SMILES'})
         
-        st.success(f"📍 Viewing: {selected_saved}")
+        # 3. Updated Success Message to show both Name and Barcode
+        st.success(f"📍 Viewing: **{selected_saved}** \n🔢 Barcode: **{current_barcode}**")
         
         col1, col2 = st.columns(2)
         if col1.button("🗑️ Delete", use_container_width=True):
