@@ -8,6 +8,10 @@ url = st.secrets["supabase"]["url"]
 key = st.secrets["supabase"]["key"]
 supabase: Client = create_client(url, key)
 
+WELL_KEYS = ["well", "position", "location"]
+PROD_KEYS = ["product", "compound", "name"]
+SMILE_KEYS = ["smiles", "smile"]
+
 # --- 2. INITIALIZATION & SESSION STATE ---
 if "scanned_plate" not in st.session_state:
     st.session_state.scanned_plate = None
@@ -146,7 +150,7 @@ with st.sidebar:
             if replace_file:
                 up_df = pd.read_excel(replace_file) if replace_file.name.endswith('xlsx') else pd.read_csv(replace_file)
                 cols = up_df.columns.tolist()
-                w_idx, p_idx, s_idx = find_best_match(cols, ["well"]), find_best_match(cols, ["product"]), find_best_match(cols, ["smiles"])
+                w_idx, p_idx, s_idx = find_best_match(cols, WELL_KEYS), find_best_match(cols, PROD_KEYS), find_best_match(cols, SMILE_KEYS)
                 
                 # Instant mapping to session state
                 up_df['Well'] = up_df.iloc[:, w_idx].apply(convert_grid)
