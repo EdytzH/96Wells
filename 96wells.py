@@ -78,7 +78,7 @@ st.markdown("""
 
 # --- 6. SIDEBAR: DATA CONTROLS ---
 with st.sidebar:
-    st.header("1. Data Setup")
+    st.header("Data Setup")
     plates_res = supabase.table("barcode_registry").select("plate_name").execute()
     saved_files = [row['plate_name'] for row in plates_res.data]
 
@@ -251,7 +251,7 @@ if not df.empty and not is_viewing_saved and id_col:
 with st.sidebar:
     if not is_viewing_saved and not df.empty:
         st.divider()
-        st.subheader("2. Save to Cloud")
+        st.subheader("Save to Cloud")
         if not st.session_state.get("has_just_saved"):
             barcode = st.text_input("Barcode (8 Digits)", max_chars=8)
             save_id = st.text_input("Custom Plate Name", value="PLATE_001")
@@ -280,7 +280,7 @@ with st.sidebar:
                     st.rerun()       
       
     st.divider()
-    st.subheader("3. Plate Search")
+    st.subheader("Plate Search")
     with st.form("scan_form", clear_on_submit=True):
         scan_val = st.text_input("🔍 Scan Barcode")
         if st.form_submit_button("Search", use_container_width=True) and scan_val:
