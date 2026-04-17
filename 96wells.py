@@ -94,8 +94,25 @@ with st.sidebar:
         index=start_index, key=f"sidebar_selector_{st.session_state.sb_ver}"
     )
 
+    is_viewing_saved = selected_saved == "-- New Upload --" # Note: Changed logic slightly for clarity
+
+    if selected_saved == "-- New Upload --":
+        # CRITICAL: If we are in New Upload mode but current_df still has old 
+        # data from a previous session/plate, we MUST clear it.
+        if "loaded_plate" in st.session_state:
+            del st.session_state.loaded_plate
+            st.session_state.current_df = pd.DataFrame()
+            st.rerun()
+
     id_col, name_col, smiles_col = None, None, None
     is_viewing_saved = selected_saved != "-- New Upload --"
+
+    if not is_viewing_saved:
+        # If the user switched to New Upload, clear the URL and scanned state
+        if st.query_params.get("barcode") or st.session_state.scanned_plate:
+            st.query_params.clear()
+            st.session_state.scanned_plate = None
+            st.rerun()
 
     if is_viewing_saved:
         bc_res = supabase.table("barcode_registry").select("barcode").eq("plate_name", selected_saved).execute()
@@ -144,39 +161,76 @@ with st.sidebar:
             st.rerun()
 
         if st.session_state.show_replace:
-            st.info("Upload file to auto-preview changes in the grid.")
+            st.info("Upload a file and map columns to preview changes.")
             replace_file = st.file_uploader("Replace existing data", type=['xlsx', 'csv'], key="repl_up")
             
             if replace_file:
+                # 1. Load the raw data
                 up_df = pd.read_excel(replace_file) if replace_file.name.endswith('xlsx') else pd.read_csv(replace_file)
                 cols = up_df.columns.tolist()
-                w_idx, p_idx, s_idx = find_best_match(cols, WELL_KEYS), find_best_match(cols, PROD_KEYS), find_best_match(cols, SMILE_KEYS)
                 
-                # Instant mapping to session state
-                up_df['Well'] = up_df.iloc[:, w_idx].apply(convert_grid)
-                up_df = up_df[up_df['Well'] != "EMPTY"]
-                up_df = up_df.rename(columns={cols[p_idx]: 'Product_Name', cols[s_idx]: 'SMILES'})
+                # 2. Re-use the smart mapping for defaults
+                w_idx = find_best_match(cols, WELL_KEYS)
+                p_idx = find_best_match(cols, PROD_KEYS)
+                s_idx = find_best_match(cols, SMILE_KEYS)
                 
-                st.session_state.current_df = up_df[['Well', 'Product_Name', 'SMILES']]
-                st.warning("Previewing New Data. Click below to save.")
-
-            if st.button("💾 Push to Cloud", use_container_width=True, type="primary"):
-                supabase.table("well_data").delete().eq("plate_name", selected_saved).execute()
-                wells_to_insert = [
-                    {"plate_name": selected_saved, "well": str(row['Well']), "product_name": str(row['Product_Name']), "smiles": str(row['SMILES'])}
-                    for _, row in st.session_state.current_df.iterrows()
-                ]
-                supabase.table("well_data").insert(wells_to_insert).execute()
-                st.session_state.show_replace = False
-                st.success("Cloud Synchronized!")
-                st.rerun()
+                # 3. Column Selectors for the Update Flow
+                up_well_col = st.selectbox("Update: Well Column", options=cols, index=w_idx, key="up_w_sel")
+                up_prod_col = st.selectbox("Update: Product Column", options=cols, index=p_idx, key="up_p_sel")
+                up_smil_col = st.selectbox("Update: SMILES Column", options=cols, index=s_idx, key="up_s_sel")
+                
+                # 4. Manual Preview Button
+                if st.button("👁️ Preview Changes on Grid", use_container_width=True):
+                    # Process and Map
+                    processed_df = up_df.copy()
+                    processed_df['Well'] = processed_df[up_well_col].apply(convert_grid)
+                    processed_df = processed_df[processed_df['Well'] != "EMPTY"]
+                    
+                    # Clean up leading zeros (e.g., A01 -> A1)
+                    processed_df['Well'] = processed_df['Well'].astype(str).str.replace(r'([A-H])0(\d)', r'\1\2', regex=True)
+                    
+                    # Rename to match the "viewing_saved" schema
+                    processed_df = processed_df.rename(columns={
+                        up_prod_col: 'Product_Name', 
+                        up_smil_col: 'SMILES'
+                    })
+                    
+                    # Update session state
+                    st.session_state.current_df = processed_df[['Well', 'Product_Name', 'SMILES']]
+                    st.session_state.preview_ready = True # Flag to show the save button
+                
+                # 5. Save Button (Only appears if previewed)
+                if st.session_state.get("preview_ready"):
+                    st.warning("Preview active. Review the grid before pushing.")
+                    if st.button("💾 Push to Cloud", use_container_width=True, type="primary"):
+                        supabase.table("well_data").delete().eq("plate_name", selected_saved).execute()
+                        wells_to_insert = [
+                            {
+                                "plate_name": selected_saved, 
+                                "well": str(row['Well']), 
+                                "product_name": str(row['Product_Name']), 
+                                "smiles": str(row['SMILES'])
+                            }
+                            for _, row in st.session_state.current_df.iterrows()
+                        ]
+                        supabase.table("well_data").insert(wells_to_insert).execute()
+                        st.session_state.show_replace = False
+                        st.session_state.preview_ready = False
+                        st.success("Cloud Synchronized!")
+                        st.rerun()
+        # --- 6. SIDEBAR: DATA CONTROLS (Inside the else: block for New Upload) ---
     else:
         # --- NEW UPLOAD LOGIC ---
         uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'], key=f"up_{st.session_state.up_ver}")
         if uploaded_file:
             new_df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('xlsx') else pd.read_csv(uploaded_file)
             cols = new_df.columns.tolist()
-            w_idx, p_idx, s_idx = find_best_match(cols, ["well"]), find_best_match(cols, ["product"]), find_best_match(cols, ["smiles"])
+            
+            # CHANGE THESE LINES TO USE THE GLOBAL CONSTANTS:
+            w_idx = find_best_match(cols, WELL_KEYS) # Changed from ["well"]
+            p_idx = find_best_match(cols, PROD_KEYS) # Changed from ["product"]
+            s_idx = find_best_match(cols, SMILE_KEYS) # Changed from ["smiles"]
+            
             c_hash = hash(tuple(cols))
             id_col = st.selectbox("Well ID Column", options=cols, index=w_idx, key=f"well_{c_hash}")
             name_col = st.selectbox("Product Name Column", options=cols, index=p_idx, key=f"prod_{c_hash}")
@@ -240,7 +294,7 @@ with st.sidebar:
 plate_col, info_col = st.columns([1.7, 1])
 
 with plate_col:
-    st.subheader("Cloud Plate View")
+    st.subheader("96 Well Plate Viewer")
     rows, cols_range = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], range(1, 13)
     h_cols = st.columns([0.6] + [1]*12)
     for i in cols_range: h_cols[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
@@ -249,12 +303,32 @@ with plate_col:
         r_cells[0].markdown(f'<p class="label-text" style="padding-top:10px">{r}</p>', unsafe_allow_html=True)
         for c in cols_range:
             w_id = f"{r}{c}"
+            # Determine which column names to look for based on mode
             s_col = 'Well' if is_viewing_saved else (id_col if id_col else None)
+            p_col = 'Product_Name' if is_viewing_saved else name_col
+            sm_col = 'SMILES' if is_viewing_saved else smiles_col
             
             has_data = False
-            if not df.empty and s_col in df.columns:
-                has_data = w_id in df[s_col].values
             
+            # Check if the well exists in the current dataframe
+            if not df.empty and s_col in df.columns:
+                row_match = df[df[s_col] == w_id]
+                
+                if not row_match.empty:
+                    # Extract values safely
+                    p_val = row_match.iloc[0].get(p_col)
+                    s_val = row_match.iloc[0].get(sm_col)
+                    
+                    # FRIENDLY CHECK: Define "Valid Data"
+                    # Checks for: Not NaN, Not None, and Not an empty string
+                    valid_name = pd.notna(p_val) and str(p_val).strip() != "" and str(p_val).lower() != "nan"
+                    valid_smile = pd.notna(s_val) and str(s_val).strip() != "" and str(s_val).lower() != "nan"
+                    
+                    # Only highlight the well if BOTH are present
+                    if valid_name and valid_smile:
+                        has_data = True
+            
+            # Render the well button
             if r_cells[c].button(w_id, key=f"btn_{w_id}", type="primary" if has_data else "secondary"):
                 st.session_state.selected_well = w_id
 
