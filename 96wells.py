@@ -9,7 +9,7 @@ key = st.secrets["supabase"]["key"]
 supabase: Client = create_client(url, key)
 
 WELL_KEYS = ["well", "position", "location"]
-PROD_KEYS = ["product", "compound", "name"]
+PROD_KEYS = ["product", "compound", "Chemical"]
 SMILE_KEYS = ["smiles", "smile"]
 
 # --- 2. INITIALIZATION & SESSION STATE ---
