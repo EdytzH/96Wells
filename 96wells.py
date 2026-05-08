@@ -32,12 +32,25 @@ if st.session_state.get("has_just_saved"):
     st.session_state.has_just_saved = False
 
 # --- 3. HELPER FUNCTIONS ---
+import difflib
+
 def find_best_match(columns, keywords):
+    best_score = 0
+    best_idx = None
+
     for i, col in enumerate(columns):
-        clean_col = str(col).strip().lower()
-        if any(key.lower() in clean_col for key in keywords):
-            return i
-    return 0
+        col_clean = str(col).strip().lower()
+
+        for key in keywords:
+            score = difflib.SequenceMatcher(None, key.lower(), col_clean).ratio()
+
+            if score > best_score:
+                best_score = score
+                best_idx = i
+
+    if best_score > 0.6:
+        return best_idx
+    return None
 
 def convert_grid(well_id):
     match = re.match(r"([A-J])(\d+)", str(well_id).strip().upper().replace(" ", ""))
