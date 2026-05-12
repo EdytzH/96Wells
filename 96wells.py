@@ -34,6 +34,22 @@ if st.session_state.get("has_just_saved"):
 # --- 3. HELPER FUNCTIONS ---
 import difflib
 
+def get_old_label(well_96):
+    """Converts a 96-well coordinate (A1-H12) back to a 10x10 coordinate (A1-J10)"""
+    match = re.match(r"([A-H])(\d+)", str(well_96).strip().upper())
+    if not match: return well_96
+    
+    row_let, col_num = match.groups()
+    # Calculate absolute position (1-96)
+    abs_pos = ((ord(row_let) - ord('A')) * 12) + int(col_num)
+    
+    # Map back to 10-wide grid
+    old_row_idx = (abs_pos - 1) // 10
+    old_col = ((abs_pos - 1) % 10) + 1
+    old_row_let = chr(ord('A') + old_row_idx)
+    
+    return f"{old_row_let}{old_col}"
+
 def find_best_match(columns, keywords):
     best_score = 0
     best_idx = None
@@ -262,6 +278,12 @@ if not df.empty and not is_viewing_saved and id_col:
 
 # --- 8. SAVE NEW SECTION ---
 with st.sidebar:
+    st.divider()
+    st.subheader("Display Settings")
+    # This checkbox will determine if we show 1-12 or 1-10 numbering
+    use_old_position = st.checkbox("Toggle Old Position Labels (1-10)", value=False)
+
+with st.sidebar:
     if not is_viewing_saved and not df.empty:
         st.divider()
         st.subheader("Save to Cloud")
@@ -302,6 +324,7 @@ with st.sidebar:
                 st.query_params["barcode"] = scan_val
                 st.session_state.sb_ver += 1
                 st.rerun()
+                
 
 # --- 9. MAIN INTERFACE ---
 plate_col, info_col = st.columns([1.7, 1])
@@ -309,41 +332,52 @@ plate_col, info_col = st.columns([1.7, 1])
 with plate_col:
     st.subheader("96 Well Plate Viewer")
     rows, cols_range = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], range(1, 13)
+    
+    # Render Column Headers (1-12)
     h_cols = st.columns([0.6] + [1]*12)
-    for i in cols_range: h_cols[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
+    for i in cols_range: 
+        h_cols[i].markdown(f'<p class="label-text">{i}</p>', unsafe_allow_html=True)
+    
+    # Render Rows
     for r in rows:
         r_cells = st.columns([0.6] + [1]*12)
         r_cells[0].markdown(f'<p class="label-text" style="padding-top:10px">{r}</p>', unsafe_allow_html=True)
+        
         for c in cols_range:
-            w_id = f"{r}{c}"
-            # Determine which column names to look for based on mode
+            w_id = f"{r}{c}" # This is the "True" ID (A1, A2... A12)
+            
+            # --- DYNAMIC LABEL LOGIC ---
+            # Use the checkbox value from your sidebar
+            if use_old_position:
+                display_label = get_old_label(w_id)
+            else:
+                display_label = w_id
+            
+            # Determine mapping columns (Preserved Logic)
             s_col = 'Well' if is_viewing_saved else (id_col if id_col else None)
             p_col = 'Product_Name' if is_viewing_saved else name_col
             sm_col = 'SMILES' if is_viewing_saved else smiles_col
             
             has_data = False
             
-            # Check if the well exists in the current dataframe
+            # Data Presence Check (Preserved Logic)
             if not df.empty and s_col in df.columns:
                 row_match = df[df[s_col] == w_id]
-                
                 if not row_match.empty:
-                    # Extract values safely
                     p_val = row_match.iloc[0].get(p_col)
                     s_val = row_match.iloc[0].get(sm_col)
                     
-                    # FRIENDLY CHECK: Define "Valid Data"
-                    # Checks for: Not NaN, Not None, and Not an empty string
+                    # Friendly Check: Valid name and smile
                     valid_name = pd.notna(p_val) and str(p_val).strip() != "" and str(p_val).lower() != "nan"
                     valid_smile = pd.notna(s_val) and str(s_val).strip() != "" and str(s_val).lower() != "nan"
                     
-                    # Only highlight the well if BOTH are present
                     if valid_name and valid_smile:
                         has_data = True
             
-            # Render the well button
-            if r_cells[c].button(w_id, key=f"btn_{w_id}", type="primary" if has_data else "secondary"):
+            # Render Button with the display_label (while keeping w_id as the key)
+            if r_cells[c].button(display_label, key=f"btn_{w_id}", type="primary" if has_data else "secondary"):
                 st.session_state.selected_well = w_id
+
 
 with info_col:
     sel = st.session_state.selected_well
